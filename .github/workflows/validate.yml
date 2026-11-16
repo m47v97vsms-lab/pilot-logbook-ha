@@ -49,3 +49,40 @@ jobs:
       - name: Build Home Assistant app image
         run: |
           docker build --pull --build-arg BUILD_VERSION=0.4.0-dev48 --build-arg BUILD_ARCH=amd64 -t pilot-logbook:ci ./pilot_logbook_engine
+
+      - name: Smoke-test container startup and Ingress guard
+        run: |
+          set -euo pipefail
+          data_dir="$RUNNER_TEMP/pilot-logbook-container-data"
+          body="$RUNNER_TEMP/pilot-logbook-container-health.json"
+          container_name="pilot-logbook-ci-$GITHUB_RUN_ID"
+          mkdir -p "$data_dir"
+          docker run -d --name "$container_name" \
+            -p 127.0.0.1:18101:8101 \
+            -v "$data_dir:/data" \
+            pilot-logbook:ci
+          cleanup() {
+            docker rm -f "$container_name" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          code=""
+          for attempt in $(seq 1 30); do
+            code="$(curl --silent --output "$body" --write-out '%{http_code}' \
+              http://127.0.0.1:18101/health || true)"
+            if [ "$code" = "403" ]; then
+              break
+            fi
+            if ! docker inspect --format '{{.State.Running}}' "$container_name" | grep -q true; then
+              docker logs "$container_name"
+              echo "::error::Pilot Logbook container exited before serving HTTP."
+              exit 1
+            fi
+            sleep 1
+          done
+          if [ "$code" != "403" ]; then
+            docker logs "$container_name"
+            echo "::error::Container did not return the expected Ingress-only 403 response."
+            exit 1
+          fi
+          grep -q 'ingress_proxy_only' "$body"
+          echo "Container image started successfully and rejected direct non-Ingress access."
