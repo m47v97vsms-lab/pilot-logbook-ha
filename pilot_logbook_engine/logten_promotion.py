@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from datetime import datetime
 
 
@@ -21,10 +22,18 @@ def _minutes(start: str | None, end: str | None) -> int | None:
 
 
 def _decimal_hours(value: str | None, label: str, blockers: list[str]) -> float | None:
+    """Parse a source time credit expressed as HH:MM or decimal hours."""
     if value is None or not str(value).strip():
         return None
+    text = str(value).strip()
+    if re.fullmatch(r"\d{1,2}:\d{2}", text):
+        hours, minutes = (int(part) for part in text.split(":"))
+        if hours <= 24 and minutes < 60 and not (hours == 24 and minutes):
+            return hours + minutes / 60
+        blockers.append(f"{label} must be a valid HH:MM duration or decimal-hour value (0–24 hours).")
+        return None
     try:
-        number = float(value)
+        number = float(text)
     except (TypeError, ValueError):
         blockers.append(f"{label} must be a decimal-hour value.")
         return None
