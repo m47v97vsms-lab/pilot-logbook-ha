@@ -81,10 +81,10 @@ open Settings > Apps > Install app, open the top-right menu, choose
 Repositories, and add the repository URL. To use a test channel, append
 `#branch-name` to the repository URL.
 
-The GitHub repository is currently private. Do not place a personal access
-token in the repository URL. Before installing, arrange an authenticated Git
-transport that the Home Assistant host can use, or use an approved public
-deployment repository.
+The public Home Assistant deployment repository is
+https://github.com/m47v97vsms-lab/pilot-logbook-ha. No personal access token or
+authenticated Git transport is required for this repository. The private
+development repository remains separate and is not needed by Home Assistant.
 
 ## Home Assistant access
 
