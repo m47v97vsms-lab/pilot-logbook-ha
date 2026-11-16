@@ -105,10 +105,18 @@ def parse_logten(content: str | bytes, filename: str = "upload") -> dict[str, An
         departure = mapped.get("departure", "")
         arrival = mapped.get("arrival", "")
         aircraft_type = mapped.get("aircraft_type", "")
+        aircraft_category = next(
+            (value.strip() for key, value in raw.items()
+             if "".join(ch for ch in key.casefold() if ch.isalnum()) == "aircrafttypeselectedcategory"),
+            "",
+        )
         remarks = mapped.get("remarks", "")
         warnings: list[str] = []
 
-        is_sim = any(token in aircraft_type.upper() for token in ("SIM", "SIMULATOR"))
+        is_sim = (
+            any(token in aircraft_type.upper() for token in ("SIM", "SIMULATOR"))
+            or aircraft_category.casefold() == "simulator"
+        )
         if is_sim:
             classification = "simulator"
         elif not departure or not arrival:
