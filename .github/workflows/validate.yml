@@ -33,7 +33,7 @@ jobs:
           app = Path("pilot_logbook_engine")
           config = yaml.safe_load((app / "config.yaml").read_text())
           repository = yaml.safe_load(Path("repository.yaml").read_text())
-          assert config["slug"] == "pilot_logbook_engine"
+          assert config["name"] == "Pilot Logbook"\n          assert config["slug"] == "pilot_logbook_engine"
           assert config["version"] == "0.4.0-dev48"
           assert config["startup"] == "application"
           assert config["boot"] == "auto"
