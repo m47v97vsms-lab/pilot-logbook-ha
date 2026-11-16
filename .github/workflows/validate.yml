@@ -35,7 +35,7 @@ jobs:
           repository = yaml.safe_load(Path("repository.yaml").read_text())
           assert config["name"] == "Pilot Logbook"
           assert config["slug"] == "pilot_logbook_engine"
-          assert config["version"] == "0.4.0-dev48"
+          assert config["version"].startswith("0.4.0-dev")
           assert config["startup"] == "application"
           assert config["boot"] == "auto"
           assert config["ingress"] is True
@@ -49,7 +49,8 @@ jobs:
           PY
       - name: Build Home Assistant app image
         run: |
-          docker build --pull --build-arg BUILD_VERSION=0.4.0-dev48 --build-arg BUILD_ARCH=amd64 -t pilot-logbook:ci ./pilot_logbook_engine
+          BUILD_VERSION="$(python -c 'import yaml; print(yaml.safe_load(open("pilot_logbook_engine/config.yaml", encoding="utf-8"))["version"])')"
+          docker build --pull --build-arg BUILD_VERSION="$BUILD_VERSION" --build-arg BUILD_ARCH=amd64 -t pilot-logbook:ci ./pilot_logbook_engine
 
       - name: Smoke-test container startup and Ingress guard
         run: |
