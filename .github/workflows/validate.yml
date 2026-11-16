@@ -1,0 +1,51 @@
+name: Validate Home Assistant app repository
+
+on:
+  push:
+    branches: ["main", "release/**"]
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install validation tools
+        run: python -m pip install --disable-pip-version-check ruff PyYAML
+      - name: Lint and compile
+        run: |
+          ruff check pilot_logbook_engine
+          python -m compileall -q pilot_logbook_engine
+      - name: Validate Supervisor metadata and bundled data
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import yaml
+
+          app = Path("pilot_logbook_engine")
+          config = yaml.safe_load((app / "config.yaml").read_text())
+          repository = yaml.safe_load(Path("repository.yaml").read_text())
+          assert config["slug"] == "pilot_logbook_engine"
+          assert config["version"] == "0.4.0-dev48"
+          assert config["startup"] == "application"
+          assert config["boot"] == "auto"
+          assert config["ingress"] is True
+          assert config["ingress_port"] == 8101
+          assert "ports" not in config
+          assert set(config["options"]) == set(config["schema"])
+          assert repository["name"] == "Pilot Logbook"
+          assert repository["url"].endswith("/pilot-logbook-ha")
+          json.loads((app / "logten_airports.json").read_text())
+          print("Supervisor metadata and bundled airport data are valid.")
+          PY
+      - name: Build Home Assistant app image
+        run: |
+          docker build --pull --build-arg BUILD_VERSION=0.4.0-dev48 --build-arg BUILD_ARCH=amd64 -t pilot-logbook:ci ./pilot_logbook_engine

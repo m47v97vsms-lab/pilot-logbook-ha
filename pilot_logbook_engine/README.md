@@ -1,6 +1,6 @@
 # Pilot Logbook
 
-A private pilot logbook app for Home Assistant OS.
+A personal pilot logbook app for Home Assistant OS.
 
 This is an experimental development build. Do not use it as the authoritative
 flight record until the real Home Assistant installation has been validated
