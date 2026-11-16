@@ -1,0 +1,28 @@
+name: "Pilot Logbook"
+version: "0.4.0-dev35"
+slug: "pilot_logbook_engine"
+description: "Personal pilot logbook with automatic time calculations, solar night estimates, atlas route map, backups, and Home Assistant sidebar access."
+arch:
+  - amd64
+startup: application
+boot: auto
+init: false
+ingress: true
+ingress_port: 8101
+panel_title: "Pilot Logbook"
+panel_icon: mdi:book-open-page-variant
+panel_admin: false
+options:
+  fcv_client_id: ""
+  fcv_client_secret: ""
+  fcv_redirect_uri: ""
+  fcv_callback_relay_secret: ""
+  enable_logten_promotion: false
+schema:
+  fcv_client_id: str
+  fcv_client_secret: password
+  fcv_redirect_uri: str
+  fcv_callback_relay_secret: password
+  enable_logten_promotion: bool
+map:
+  - type: data
