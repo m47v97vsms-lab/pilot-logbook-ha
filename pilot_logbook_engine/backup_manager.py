@@ -101,6 +101,8 @@ def validate_database(path, verify_manifest=True):
             raise BackupError(
                 "Backup is missing required tables: " + ", ".join(sorted(missing))
             )
+        if conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            raise BackupError("SQLite foreign-key integrity check failed.")
         version = conn.execute(
             "SELECT MAX(version) FROM schema_version"
         ).fetchone()[0]
@@ -196,6 +198,8 @@ def _reserve_restore_temp_path(db_path):
 
 def create_backup(db_path, backup_dir):
     db_path, backup_dir = Path(db_path), Path(backup_dir)
+    if db_path.is_symlink():
+        raise BackupError("The live database must not be a symbolic link.")
     if not db_path.is_file():
         raise BackupError("The live database does not exist yet.")
     backup_dir.mkdir(parents=True, exist_ok=True)
@@ -276,11 +280,19 @@ def restore_backup(backup_dir, filename, db_path):
     if not isinstance(filename, str) or not BACKUP_RE.fullmatch(filename):
         raise BackupError("Invalid backup filename.")
     backup_dir, db_path = Path(backup_dir), Path(db_path)
+    if db_path.is_symlink():
+        raise BackupError("The live database must not be a symbolic link.")
     source_path = backup_dir / filename
     # Resolve prevents path traversal even if filename validation changes later.
     if source_path.resolve().parent != backup_dir.resolve():
         raise BackupError("Invalid backup path.")
+    if source_path.is_symlink():
+        raise BackupError("Backup file must not be a symbolic link.")
+    source_digest_before = _sha256_file(source_path)
     details = validate_database(source_path)
+    source_digest_after_validation = _sha256_file(source_path)
+    if not hmac.compare_digest(source_digest_before, source_digest_after_validation):
+        raise BackupError("Backup changed during restore validation.")
     if db_path.exists():
         create_backup(db_path, backup_dir)  # mandatory pre-restore snapshot
     temp_path = _reserve_restore_temp_path(db_path)
@@ -293,7 +305,18 @@ def restore_backup(backup_dir, filename, db_path):
         finally:
             dst.close()
             src.close()
-        validate_database(temp_path)
+        restored_details = validate_database(temp_path)
+        if restored_details != details:
+            raise BackupError(
+                "Restored temporary database metadata does not match the validated backup."
+            )
+        source_details_after_copy = validate_database(source_path)
+        source_digest_after_copy = _sha256_file(source_path)
+        if (
+            source_details_after_copy != details
+            or not hmac.compare_digest(source_digest_before, source_digest_after_copy)
+        ):
+            raise BackupError("Backup changed while it was being restored.")
         os.replace(temp_path, db_path)
     finally:
         temp_path.unlink(missing_ok=True)

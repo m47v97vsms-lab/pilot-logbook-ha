@@ -45,22 +45,41 @@ FIELD_ALIASES = {
 }
 
 
-def _header_key(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", str(value).casefold())
+def _header_key(value: str, known_headers: set[str] | None = None) -> str:
+    # The parser appends __N suffixes to duplicate headers. Strip a suffix only
+    # when its unsuffixed base is also present in this batch; a unique literal
+    # header such as "Date__2" is a distinct source field, not an alias for Date.
+    text = str(value)
+    known = known_headers or set()
+    while True:
+        match = re.search(r"(?:__\d+)+$", text)
+        if not match:
+            break
+        base = text[:match.start()]
+        if base not in known:
+            break
+        text = base
+    return re.sub(r"[^a-z0-9]+", "", text.casefold())
 
 
 def default_field_mapping(headers) -> dict[str, str]:
-    """Choose unambiguous common LogTen header aliases without altering source names."""
-    available = list(headers)
-    normalized = {_header_key(header): header for header in available}
+    """Choose only aliases that resolve to one unambiguous source column."""
+    header_list = list(headers)
+    known_headers = set(header_list)
+    normalized = {}
+    for header in header_list:
+        normalized.setdefault(_header_key(header, known_headers), []).append(header)
     mapping = {}
     for target, aliases in FIELD_ALIASES.items():
         matches = []
+        ambiguous = False
         for alias in aliases:
-            match = normalized.get(_header_key(alias))
-            if match and match not in matches:
-                matches.append(match)
-        mapping[target] = matches[0] if len(matches) == 1 else ""
+            candidates = normalized.get(_header_key(alias, known_headers), [])
+            if len(candidates) > 1:
+                ambiguous = True
+            elif len(candidates) == 1 and candidates[0] not in matches:
+                matches.append(candidates[0])
+        mapping[target] = matches[0] if len(matches) == 1 and not ambiguous else ""
     return mapping
 
 
@@ -85,9 +104,14 @@ def validate_field_mapping(mapping, headers) -> dict[str, str]:
 
 
 def _parse_date(value: str):
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        return None
     try:
-        return date.fromisoformat(value.strip())
-    except (ValueError, AttributeError):
+        return date.fromisoformat(value)
+    except ValueError:
         return None
 
 
@@ -106,6 +130,23 @@ def _parse_hhmm(value: str):
         except ValueError:
             pass
     return None
+
+
+def _parse_duration_minutes(value: str):
+    """Parse an explicit HH:MM duration or decimal-hour value."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if re.fullmatch(r"\d{1,2}:\d{2}", text):
+        hours, minutes = (int(part) for part in text.split(":"))
+        return hours * 60 + minutes if hours <= 24 and minutes < 60 and not (hours == 24 and minutes) else None
+    try:
+        number = float(text)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or number < 0 or number > 24:
+        return None
+    return int(round(number * 60))
 
 
 def _resolve_airport(code: str, airports: dict):
@@ -159,7 +200,10 @@ def assess_logten_record(
             "review_value": source.get(column, ""),
         }
         for column in raw
-        if column not in used_columns and str(source.get(column, "") or "").strip()
+        if column not in used_columns and (
+            str(raw.get(column, "") or "").strip()
+            or str(source.get(column, "") or "").strip()
+        )
     ]
     errors, warnings, times = [], [], {}
 
@@ -182,13 +226,10 @@ def assess_logten_record(
             except ZoneInfoNotFoundError:
                 errors.append(f"{label} airport {airport['icao']} has an invalid IANA time zone.")
 
+    duration_minutes = _parse_duration_minutes(mapped["total_time"])
     if mapped["total_time"]:
-        try:
-            total = float(mapped["total_time"])
-            if not math.isfinite(total) or total < 0 or total > 24:
-                raise ValueError
-        except ValueError:
-            errors.append("Total Time is not a valid decimal-hour value.")
+        if duration_minutes is None:
+            errors.append("Total Time must be a valid HH:MM duration or decimal-hour value (0–24 hours).")
     else:
         warnings.append("Total Time is blank.")
 
@@ -304,6 +345,7 @@ def assess_logten_record(
                     times[field]["status"] = "non_chronological"
 
     return {
+        "duration_minutes": duration_minutes,
         "mapped": mapped,
         "resolved_airports": {
             "departure_icao": dep.get("icao") if dep else None,

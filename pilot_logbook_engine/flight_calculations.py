@@ -4,6 +4,7 @@ Night estimates use a configurable solar-centre elevation threshold. This is an
 astronomical estimate, not a determination of a jurisdiction's legal night-time.
 """
 from datetime import datetime, timezone, timedelta
+import calendar
 import math
 
 EARTH_RADIUS_NM = 3440.065
@@ -28,10 +29,17 @@ def _slerp(a, b, fraction):
     va, vb = vec(*a), vec(*b)
     dot = max(-1.0, min(1.0, sum(x*y for x,y in zip(va,vb))))
     omega = math.acos(dot)
-    if omega < 1e-9: v = va
+    if omega < 1e-9:
+        v = va
+    elif math.pi - omega < 1e-8:
+        raise ValueError("Airport endpoints are nearly antipodal; the great-circle route is ambiguous.")
     else:
         s = math.sin(omega)
-        v = tuple(math.sin((1-fraction)*omega)/s*x + math.sin(fraction*omega)/s*y for x,y in zip(va,vb))
+        v = tuple(
+            math.sin((1 - fraction) * omega) / s * x
+            + math.sin(fraction * omega) / s * y
+            for x, y in zip(va, vb)
+        )
     lat = math.degrees(math.atan2(v[2], math.hypot(v[0],v[1])))
     lon = math.degrees(math.atan2(v[1],v[0]))
     return lat, lon
@@ -41,7 +49,8 @@ def solar_elevation(instant, latitude, longitude):
     dt = _utc(instant)
     day = dt.timetuple().tm_yday
     hour = dt.hour + dt.minute/60 + dt.second/3600
-    gamma = 2*math.pi/365 * (day-1 + (hour-12)/24)
+    year_days = 366 if calendar.isleap(dt.year) else 365
+    gamma = 2*math.pi/year_days * (day-1 + (hour-12)/24)
     eqtime = 229.18*(0.000075 + 0.001868*math.cos(gamma)-0.032077*math.sin(gamma)-0.014615*math.cos(2*gamma)-0.040849*math.sin(2*gamma))
     decl = (0.006918 - 0.399912*math.cos(gamma) + 0.070257*math.sin(gamma)
             -0.006758*math.cos(2*gamma) + 0.000907*math.sin(2*gamma)

@@ -1,12 +1,27 @@
 from __future__ import annotations
 from datetime import date
+import math
+import re
 import sqlite3
+
+
+def _valid_coordinate_pair(latitude, longitude) -> bool:
+    try:
+        lat, lon = float(latitude), float(longitude)
+    except (TypeError, ValueError):
+        return False
+    return (
+        math.isfinite(lat) and math.isfinite(lon)
+        and -90 <= lat <= 90 and -180 <= lon <= 180
+    )
 
 
 def build_summary(conn: sqlite3.Connection, start: str | None = None, end: str | None = None) -> dict:
     """Return deterministic date-filtered totals using stored flight values."""
     for label, value in (("start", start), ("end", end)):
         if value:
+            if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+                raise ValueError(f"{label} must be an ISO date (YYYY-MM-DD).")
             try:
                 date.fromisoformat(value)
             except ValueError as exc:
@@ -39,7 +54,7 @@ def build_summary(conn: sqlite3.Connection, start: str | None = None, end: str |
 
 
 def build_routes(conn: sqlite3.Connection, start: str | None = None, end: str | None = None) -> dict:
-    """Aggregate distinct airport pairs for plotting; missing coordinates remain explicit."""
+    """Aggregate airport pairs; missing airport records and coordinates remain explicit."""
     # Validate date filters with the same rules as the summary endpoint.
     build_summary(conn, start, end)
     clauses, params = [], []
@@ -50,11 +65,17 @@ def build_routes(conn: sqlite3.Connection, start: str | None = None, end: str | 
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     rows = conn.execute(f"""SELECT f.departure_icao, f.arrival_icao, COUNT(*) flights,
         COALESCE(SUM(f.block_minutes),0) block_minutes,
-        dep.name departure_name, dep.latitude departure_latitude, dep.longitude departure_longitude,
-        arr.name arrival_name, arr.latitude arrival_latitude, arr.longitude arrival_longitude
-        FROM flights f JOIN airports dep ON dep.icao=f.departure_icao
-        JOIN airports arr ON arr.icao=f.arrival_icao{where}
+        COALESCE(dep.name,f.departure_icao) departure_name,
+        dep.latitude departure_latitude, dep.longitude departure_longitude,
+        COALESCE(arr.name,f.arrival_icao) arrival_name,
+        arr.latitude arrival_latitude, arr.longitude arrival_longitude
+        FROM flights f LEFT JOIN airports dep ON dep.icao=f.departure_icao
+        LEFT JOIN airports arr ON arr.icao=f.arrival_icao{where}
         GROUP BY f.departure_icao,f.arrival_icao ORDER BY flights DESC, block_minutes DESC""", params).fetchall()
     routes = [dict(r) for r in rows]
-    plotted = sum(1 for r in routes if r["departure_latitude"] is not None and r["arrival_latitude"] is not None)
+    plotted = sum(
+        1 for route in routes
+        if _valid_coordinate_pair(route["departure_latitude"], route["departure_longitude"])
+        and _valid_coordinate_pair(route["arrival_latitude"], route["arrival_longitude"])
+    )
     return {"routes": routes, "plotted": plotted, "unplotted": len(routes)-plotted}
