@@ -75,7 +75,13 @@ def _logten_batch_mapping(conn, batch_id, raw=None):
         ).fetchone()
         raw = json.loads(first["raw_json"]) if first else {}
     saved = json.loads(batch["field_mapping_json"] or "{}")
-    return validate_field_mapping(saved, raw.keys()) if saved else default_field_mapping(raw.keys())
+    # Older staged batches may contain a complete mapping object whose values
+    # are all blank (the pre-autodetection format). Treat that legacy state as
+    # unset so current safe aliases are applied. Preserve any non-empty saved
+    # mapping exactly, including deliberate blank selections made by users.
+    if saved and any(value for value in saved.values()):
+        return validate_field_mapping(saved, raw.keys())
+    return default_field_mapping(raw.keys())
 
 
 def _logten_classification(original, assessment):
