@@ -37,6 +37,7 @@ def build_summary(conn: sqlite3.Connection, start: str | None = None, end: str |
     totals = conn.execute(f"""SELECT COUNT(*) flights,
         COALESCE(SUM(f.block_minutes),0) block_minutes,
         COALESCE(SUM(f.air_minutes),0) air_minutes,
+        COALESCE(SUM(f.logged_minutes),0) logged_minutes,
         COALESCE(SUM(o.day_landings),0) day_landings,
         COALESCE(SUM(o.night_landings),0) night_landings,
         COALESCE(SUM(o.night_minutes),0) night_minutes,
@@ -47,7 +48,8 @@ def build_summary(conn: sqlite3.Connection, start: str | None = None, end: str |
         FROM flights f LEFT JOIN flight_operations o ON o.flight_id=f.id{where}""", params).fetchone()
     aircraft = conn.execute(f"""SELECT COALESCE(NULLIF(f.aircraft_type,''),'Unspecified') aircraft_type,
         COUNT(*) flights, COALESCE(SUM(f.block_minutes),0) block_minutes,
-        COALESCE(SUM(f.air_minutes),0) air_minutes
+        COALESCE(SUM(f.air_minutes),0) air_minutes,
+        COALESCE(SUM(f.logged_minutes),0) logged_minutes
         FROM flights f{where} GROUP BY COALESCE(NULLIF(f.aircraft_type,''),'Unspecified')
         ORDER BY block_minutes DESC, aircraft_type""", params).fetchall()
     return {"start": start, "end": end, "totals": dict(totals), "aircraft": [dict(r) for r in aircraft]}
@@ -65,6 +67,7 @@ def build_routes(conn: sqlite3.Connection, start: str | None = None, end: str | 
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     rows = conn.execute(f"""SELECT f.departure_icao, f.arrival_icao, COUNT(*) flights,
         COALESCE(SUM(f.block_minutes),0) block_minutes,
+        COALESCE(SUM(f.logged_minutes),0) logged_minutes,
         COALESCE(dep.name,f.departure_icao) departure_name,
         dep.latitude departure_latitude, dep.longitude departure_longitude,
         COALESCE(arr.name,f.arrival_icao) arrival_name,

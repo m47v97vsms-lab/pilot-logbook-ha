@@ -37,8 +37,8 @@ def _decimal_hours(value: str | None, label: str, blockers: list[str]) -> float 
 def build_promotion_preview(assessment: dict) -> dict:
     """Build a candidate for event-timed or duration-only historical records.
 
-    Duration-only records use the supplied duration as logged air time. No
-    operational timestamps or block time are inferred or fabricated.
+    Duration-only records retain the supplied duration as logged flight time.
+    They do not receive derived air/block time or fabricated event timestamps.
     """
     blockers = list(assessment.get("errors") or [])
     warnings = list(assessment.get("warnings") or [])
@@ -71,7 +71,7 @@ def build_promotion_preview(assessment: dict) -> dict:
     if duration_only:
         if duration_minutes is None:
             blockers.append("A valid Total Time duration is required when OUT/OFF/ON/IN are absent.")
-        warnings.append("Duration-only historical record: logged duration is retained as air time; block time and event timestamps are unavailable.")
+        warnings.append("Duration-only historical record: supplied duration is retained as logged flight time; block time, air time and event timestamps are unavailable.")
     else:
         for key in event_fields:
             if times.get(key, {}).get("status") != "valid_local_time":
@@ -81,7 +81,7 @@ def build_promotion_preview(assessment: dict) -> dict:
         return {"ready_for_manual_confirmation": False, "promotion_enabled": False,
                 "blockers": list(dict.fromkeys(blockers)), "warnings": warnings, "candidate": None}
 
-    def credits(air_minutes):
+    def credits(validation_minutes):
         values = {}
         for key, label in (("pic", "PIC"), ("sic", "SIC"), ("pilot_flying", "Pilot Flying"),
                            ("night", "Night time"), ("actual_instrument", "Actual instrument time")):
@@ -89,13 +89,13 @@ def build_promotion_preview(assessment: dict) -> dict:
         for key, label in (("pic", "PIC time"), ("sic", "SIC time"), ("pilot_flying", "Pilot Flying time"),
                            ("night", "Night time"), ("actual_instrument", "Actual instrument time")):
             value = values[key]
-            if value is not None and air_minutes is not None and value * 60 > air_minutes + 1:
+            if value is not None and validation_minutes is not None and value * 60 > validation_minutes + 1:
                 basis = "logged duration" if duration_only else "calculated OFF–ON air time"
-                blockers.append(f"{label} cannot exceed {basis} ({air_minutes} minutes) by more than one minute.")
+                blockers.append(f"{label} cannot exceed {basis} ({validation_minutes} minutes) by more than one minute.")
         return values
 
     if duration_only:
-        block_minutes, air_minutes = None, duration_minutes
+        block_minutes, air_minutes, logged_minutes = None, None, duration_minutes
         ordered_utc, local_values = [None] * 4, [None] * 4
         arrival_date = mapped["flight_date"]
     else:
@@ -119,13 +119,16 @@ def build_promotion_preview(assessment: dict) -> dict:
             blockers.append("Calculated air time exceeds calculated block time.")
         local_values = [local(key) for key in event_fields]
         arrival_date = times["in"].get("local_date")
+        logged_minutes = duration_minutes if duration_minutes is not None else air_minutes
 
-    credit_values = credits(air_minutes)
+    credit_values = credits(logged_minutes if duration_only else air_minutes)
     if blockers:
         return {"ready_for_manual_confirmation": False, "promotion_enabled": False,
                 "blockers": list(dict.fromkeys(blockers)), "warnings": warnings, "candidate": None}
     if not duration_only and duration_minutes is not None and abs(duration_minutes - air_minutes) > 5:
         warnings.append("LogTen Total Time differs from the OFF/ON air-time calculation by more than five minutes.")
+
+    source_total_time = next((item.get("original_value") for item in assessment.get("reconciliation", []) if item.get("target") == "total_time"), mapped.get("total_time") or None)
 
     candidate = {
         "flight_date": mapped["flight_date"], "arrival_date": arrival_date,
@@ -136,7 +139,7 @@ def build_promotion_preview(assessment: dict) -> dict:
         "out_utc": ordered_utc[0], "off_utc": ordered_utc[1], "on_utc": ordered_utc[2], "in_utc": ordered_utc[3],
         "out_local": local_values[0], "off_local": local_values[1], "on_local": local_values[2], "in_local": local_values[3],
         "departure_timezone": airports["departure_timezone"], "arrival_timezone": airports["arrival_timezone"],
-        "block_minutes": block_minutes, "air_minutes": air_minutes,
+        "block_minutes": block_minutes, "air_minutes": air_minutes, "logged_minutes": logged_minutes,
         "pic": credit_values["pic"], "sic": credit_values["sic"], "pilot_flying": credit_values["pilot_flying"],
         "night_minutes": credit_values["night"] * 60 if credit_values["night"] is not None else None,
         "actual_instrument_minutes": credit_values["actual_instrument"] * 60 if credit_values["actual_instrument"] is not None else None,
@@ -144,7 +147,7 @@ def build_promotion_preview(assessment: dict) -> dict:
         "remarks": mapped.get("remarks") or None,
         "source_only_columns": [item.get("source_column") for item in unmapped_columns],
         "time_recording_mode": "duration_only" if duration_only else "out_off_on_in",
-        "source_total_time": mapped.get("total_time") or None,
+        "source_total_time": source_total_time,
     }
     return {"ready_for_manual_confirmation": True, "promotion_enabled": False, "blockers": [],
             "warnings": list(dict.fromkeys(warnings)), "candidate": candidate,

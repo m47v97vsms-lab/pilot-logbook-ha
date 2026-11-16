@@ -34,7 +34,7 @@ from fcv_oauth_flow import complete_authorization, FCVOAuthFlowError
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
 DB_PATH = os.path.join(DATA_DIR, "logbook_engine.sqlite3")
 BACKUP_DIR = os.path.join(DATA_DIR, "backups")
-CURRENT_SCHEMA_VERSION = 12
+CURRENT_SCHEMA_VERSION = 13
 app = Flask(__name__)
 def load_secret_key():
     configured = os.environ.get("SECRET_KEY")
@@ -265,7 +265,8 @@ def init_db():
       out_utc TEXT, off_utc TEXT, on_utc TEXT, in_utc TEXT,
       out_local TEXT, off_local TEXT, on_local TEXT, in_local TEXT,
       departure_timezone TEXT NOT NULL, arrival_timezone TEXT NOT NULL,
-      block_minutes INTEGER, air_minutes INTEGER,
+      block_minutes INTEGER, air_minutes INTEGER, logged_minutes INTEGER,
+      time_recording_mode TEXT NOT NULL DEFAULT 'out_off_on_in', source_total_time TEXT,
       pic REAL, sic REAL, pilot_flying REAL, remarks TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -445,6 +446,23 @@ def init_db():
         conn.execute("INSERT OR IGNORE INTO migration_history(version) VALUES (12)")
         conn.execute("DELETE FROM schema_version")
         conn.execute("INSERT INTO schema_version(version) VALUES (12)")
+    if current < 13:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(flights)")}
+        additions = {
+            "logged_minutes": "INTEGER",
+            "time_recording_mode": "TEXT NOT NULL DEFAULT 'out_off_on_in'",
+            "source_total_time": "TEXT",
+        }
+        for col, decl in additions.items():
+            if col not in cols:
+                conn.execute(f"ALTER TABLE flights ADD COLUMN {col} {decl}")
+        conn.execute(
+            "UPDATE flights SET logged_minutes=air_minutes "
+            "WHERE logged_minutes IS NULL AND air_minutes IS NOT NULL"
+        )
+        conn.execute("INSERT OR IGNORE INTO migration_history(version) VALUES (13)")
+        conn.execute("DELETE FROM schema_version")
+        conn.execute("INSERT INTO schema_version(version) VALUES (13)")
     for row in AIRPORTS:
         conn.execute("INSERT OR IGNORE INTO airports(icao,iata,name,timezone) VALUES(?,?,?,?)", row)
     # Import the user's LogTen Places export once per ICAO, preserving any existing airport record.
@@ -908,16 +926,17 @@ def create_flight():
           flight_date,arrival_date,flight_number,aircraft_registration,aircraft_type,
           departure_icao,arrival_icao,out_utc,off_utc,on_utc,in_utc,
           out_local,off_local,on_local,in_local,departure_timezone,arrival_timezone,
-          block_minutes,air_minutes,pic,sic,pilot_flying,remarks)
-          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+          block_minutes,air_minutes,logged_minutes,time_recording_mode,source_total_time,
+          pic,sic,pilot_flying,remarks)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
           (flight_date.isoformat(),arrival_date.isoformat(),meta.get("flight_number"),
            meta.get("aircraft_registration"),meta.get("aircraft_type"),dep["icao"],arr["icao"],
            events["OUT"][0],events["OFF"][0],events["ON"][0],events["IN"][0],
            events["OUT"][1],events["OFF"][1],events["ON"][1],events["IN"][1],
-           dep["timezone"],arr["timezone"],block,air,meta["pic"],meta["sic"],
+           dep["timezone"],arr["timezone"],block,air,air,"out_off_on_in",None,meta["pic"],meta["sic"],
            meta["pilot_flying"],meta.get("remarks")))
         db().commit()
-        return jsonify(id=cur.lastrowid,block_minutes=block,air_minutes=air,events=events),201
+        return jsonify(id=cur.lastrowid,block_minutes=block,air_minutes=air,logged_minutes=air,events=events),201
     except AmbiguousTime as e: return jsonify(error="ambiguous_local_time",**e.payload),409
     except (ValueError,KeyError,ZoneInfoNotFoundError,sqlite3.IntegrityError) as e: return jsonify(error=str(e)),400
 
@@ -939,15 +958,17 @@ def update_flight(flight_id):
             events["OUT"][0], events["OFF"][0], events["ON"][0], events["IN"][0],
             events["OUT"][1], events["OFF"][1], events["ON"][1], events["IN"][1],
             dep["timezone"], arr["timezone"], resolved["block_minutes"], resolved["air_minutes"],
+            resolved["air_minutes"], "out_off_on_in", None,
             meta["pic"], meta["sic"], meta["pilot_flying"], meta.get("remarks"), flight_id)
         db().execute("""UPDATE flights SET flight_date=?,arrival_date=?,flight_number=?,
           aircraft_registration=?,aircraft_type=?,departure_icao=?,arrival_icao=?,
           out_utc=?,off_utc=?,on_utc=?,in_utc=?,out_local=?,off_local=?,on_local=?,in_local=?,
-          departure_timezone=?,arrival_timezone=?,block_minutes=?,air_minutes=?,pic=?,sic=?,
-          pilot_flying=?,remarks=?,updated_at=CURRENT_TIMESTAMP WHERE id=?""", values)
+          departure_timezone=?,arrival_timezone=?,block_minutes=?,air_minutes=?,logged_minutes=?,
+          time_recording_mode=?,source_total_time=?,pic=?,sic=?,pilot_flying=?,remarks=?,
+          updated_at=CURRENT_TIMESTAMP WHERE id=?""", values)
         db().commit()
         return jsonify(ok=True, id=flight_id, block_minutes=resolved["block_minutes"],
-                       air_minutes=resolved["air_minutes"], events=events)
+                       air_minutes=resolved["air_minutes"], logged_minutes=resolved["air_minutes"], events=events)
     except AmbiguousTime as e:
         return jsonify(error="ambiguous_local_time", **e.payload), 409
     except (ValueError, KeyError, ZoneInfoNotFoundError, sqlite3.IntegrityError) as e:
@@ -1379,15 +1400,17 @@ def logten_promote_record(batch_id, record_id):
           flight_date,arrival_date,flight_number,aircraft_registration,aircraft_type,
           departure_icao,arrival_icao,out_utc,off_utc,on_utc,in_utc,
           out_local,off_local,on_local,in_local,departure_timezone,arrival_timezone,
-          block_minutes,air_minutes,pic,sic,pilot_flying,remarks
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(
+          block_minutes,air_minutes,logged_minutes,time_recording_mode,source_total_time,
+          pic,sic,pilot_flying,remarks
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(
           candidate["flight_date"],candidate["arrival_date"],candidate["flight_number"],
           candidate["aircraft_registration"],candidate["aircraft_type"],
           candidate["departure_icao"],candidate["arrival_icao"],candidate["out_utc"],
           candidate["off_utc"],candidate["on_utc"],candidate["in_utc"],
           candidate["out_local"],candidate["off_local"],candidate["on_local"],candidate["in_local"],
           candidate["departure_timezone"],candidate["arrival_timezone"],
-          candidate["block_minutes"],candidate["air_minutes"],candidate["pic"],candidate["sic"],
+          candidate["block_minutes"],candidate["air_minutes"],candidate["logged_minutes"],
+          candidate["time_recording_mode"],candidate["source_total_time"],candidate["pic"],candidate["sic"],
           candidate["pilot_flying"],candidate["remarks"]))
         flight_id=cur.lastrowid
         if candidate.get("night_minutes") is not None or candidate.get("actual_instrument_minutes") is not None:
