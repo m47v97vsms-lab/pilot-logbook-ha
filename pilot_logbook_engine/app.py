@@ -139,6 +139,29 @@ def _logten_duplicate_review(conn, batch_id, record_id, fingerprint, candidate,
         ).fetchall()
         exact_ids = {item["id"] for item in exact_matches}
         possible_matches = [dict(row) for row in possible_rows if row["id"] not in exact_ids]
+    if (candidate.get("time_recording_mode") == "duration_only"
+            and candidate.get("logged_minutes") is not None
+            and flight_date and departure and arrival):
+        duration_rows = conn.execute(
+            """SELECT id,flight_date,flight_number,departure_icao,arrival_icao,
+                      out_utc,in_utc,aircraft_registration
+               FROM flights
+               WHERE flight_date=? AND departure_icao=? AND arrival_icao=?
+                 AND time_recording_mode='duration_only' AND logged_minutes=?
+               ORDER BY id LIMIT 20""",
+            (flight_date, departure, arrival, candidate["logged_minutes"]),
+        ).fetchall()
+        known_ids = {item["id"] for item in exact_matches + possible_matches}
+        registration = candidate.get("aircraft_registration")
+        for row in duration_rows:
+            item = dict(row)
+            if item["id"] in known_ids:
+                continue
+            identifier_matches = bool(
+                (flight_number and item.get("flight_number") == flight_number)
+                or (registration and item.get("aircraft_registration") == registration)
+            )
+            (exact_matches if identifier_matches else possible_matches).append(item)
     return {
         "identical_staged_records": staged_matches,
         "earlier_staged_duplicates": primary_staged_duplicates,
@@ -983,9 +1006,11 @@ def create_flight():
 def update_flight(flight_id):
     data = request.get_json(silent=True) or {}
     try:
-        existing = db().execute("SELECT id FROM flights WHERE id=?", (flight_id,)).fetchone()
+        existing = db().execute("SELECT id,time_recording_mode FROM flights WHERE id=?", (flight_id,)).fetchone()
         if not existing:
             return jsonify(error="Flight not found"), 404
+        if existing["time_recording_mode"] != "out_off_on_in":
+            return jsonify(error="This imported flight has incomplete source event times and cannot be edited with the full OUT/OFF/ON/IN editor. Correct its staged LogTen source before promotion; the canonical record is preserved unchanged."), 409
         meta = clean_flight_metadata(data)
         dep = airport(data["departure_icao"])
         arr = airport(data["arrival_icao"])
@@ -1224,6 +1249,49 @@ def logten_upload():
       record_count=parsed["nonempty_records"],blank_rows_skipped=parsed["blank_rows_skipped"],
       delimiter=parsed["delimiter"],classification_counts=parsed["classification_counts"],
       warning_count=parsed["warning_count"],message="Staged for review only; canonical flight totals were not changed."),201
+
+@app.delete("/api/imports/<int:batch_id>")
+def logten_delete_batch(batch_id):
+    conn = db()
+    batch = conn.execute("SELECT id,filename FROM import_batches WHERE id=?", (batch_id,)).fetchone()
+    if batch is None:
+        return jsonify(error="Import batch not found."), 404
+    promoted = conn.execute(
+        "SELECT COUNT(*) FROM import_records WHERE batch_id=? AND promoted_flight_id IS NOT NULL",
+        (batch_id,),
+    ).fetchone()[0]
+    if promoted:
+        return jsonify(error="This batch contains promoted flights and cannot be deleted. Clear only its unpromoted staged records instead.",
+                       promoted_records=promoted), 409
+    records = conn.execute("SELECT COUNT(*) FROM import_records WHERE batch_id=?", (batch_id,)).fetchone()[0]
+    conn.execute("DELETE FROM import_batches WHERE id=?", (batch_id,))
+    conn.commit()
+    return jsonify(ok=True,batch_id=batch_id,deleted_records=records,
+                   message="Import batch and its staged records deleted. Confirmed flights were not changed.")
+
+
+@app.post("/api/imports/clear-unpromoted")
+def logten_clear_unpromoted():
+    conn = db()
+    promoted = conn.execute(
+        "SELECT COUNT(*) FROM import_records WHERE promoted_flight_id IS NOT NULL"
+    ).fetchone()[0]
+    staged = conn.execute(
+        "SELECT COUNT(*) FROM import_records WHERE promoted_flight_id IS NULL"
+    ).fetchone()[0]
+    batches = conn.execute(
+        """SELECT COUNT(*) FROM import_batches b
+           WHERE EXISTS (SELECT 1 FROM import_records r WHERE r.batch_id=b.id
+                         AND r.promoted_flight_id IS NULL)"""
+    ).fetchone()[0]
+    conn.execute("DELETE FROM import_records WHERE promoted_flight_id IS NULL")
+    conn.execute("DELETE FROM import_batches WHERE NOT EXISTS "
+                 "(SELECT 1 FROM import_records r WHERE r.batch_id=import_batches.id)")
+    conn.commit()
+    return jsonify(ok=True,deleted_batches=batches,deleted_records=staged,
+                   preserved_promoted_records=promoted,
+                   message="All unpromoted staged import records were cleared. Promoted flights and their source records were preserved.")
+
 
 @app.get("/api/imports")
 def logten_imports_list():

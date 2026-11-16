@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from datetime import datetime
 
 
@@ -21,10 +22,18 @@ def _minutes(start: str | None, end: str | None) -> int | None:
 
 
 def _decimal_hours(value: str | None, label: str, blockers: list[str]) -> float | None:
+    """Parse a source time credit expressed as HH:MM or decimal hours."""
     if value is None or not str(value).strip():
         return None
+    text = str(value).strip()
+    if re.fullmatch(r"\d{1,2}:\d{2}", text):
+        hours, minutes = (int(part) for part in text.split(":"))
+        if hours <= 24 and minutes < 60 and not (hours == 24 and minutes):
+            return hours + minutes / 60
+        blockers.append(f"{label} must be a valid HH:MM duration or decimal-hour value (0–24 hours).")
+        return None
     try:
-        number = float(value)
+        number = float(text)
     except (TypeError, ValueError):
         blockers.append(f"{label} must be a decimal-hour value.")
         return None
@@ -35,10 +44,11 @@ def _decimal_hours(value: str | None, label: str, blockers: list[str]) -> float 
 
 
 def build_promotion_preview(assessment: dict) -> dict:
-    """Build a candidate for event-timed or duration-only historical records.
+    """Build a candidate for full-event, OUT/IN-only, or duration-only records.
 
-    Duration-only records retain the supplied duration as logged flight time.
-    They do not receive derived air/block time or fabricated event timestamps.
+    Missing event timestamps are never inferred. OUT/IN-only records receive
+    block time only; supplied Total Time remains the logged flight duration.
+    Duration-only records retain the supplied duration without derived events.
     """
     blockers = list(assessment.get("errors") or [])
     warnings = list(assessment.get("warnings") or [])
@@ -68,14 +78,25 @@ def build_promotion_preview(assessment: dict) -> dict:
     event_fields = ("out", "off", "on", "in")
     present_events = [key for key in event_fields if str(mapped.get(key) or "").strip()]
     duration_only = not present_events
+    out_in_only = present_events == ["out", "in"]
+    full_event_timing = present_events == list(event_fields)
     if duration_only:
         if duration_minutes is None:
             blockers.append("A valid Total Time duration is required when OUT/OFF/ON/IN are absent.")
         warnings.append("Duration-only historical record: supplied duration is retained as logged flight time; block time, air time and event timestamps are unavailable.")
-    else:
+    elif out_in_only:
+        if duration_minutes is None:
+            blockers.append("A valid Total Time duration is required for an OUT/IN-only record; the source duration cannot be reconstructed.")
+        for key in ("out", "in"):
+            if times.get(key, {}).get("status") != "valid_local_time":
+                blockers.append(f"{key.upper()} must have one unambiguous resolved timestamp.")
+        warnings.append("OUT/IN-only record: block time is calculated from the supplied timestamps; air time is unavailable and the source Total Time is retained as logged flight time.")
+    elif full_event_timing:
         for key in event_fields:
             if times.get(key, {}).get("status") != "valid_local_time":
-                blockers.append(f"{key.upper()} must have one unambiguous resolved timestamp; partial event-time records cannot be inferred.")
+                blockers.append(f"{key.upper()} must have one unambiguous resolved timestamp.")
+    else:
+        blockers.append("Only complete OUT/OFF/ON/IN timestamps, an OUT+IN pair, or no event timestamps are supported. Other partial event-time combinations require manual source correction.")
 
     if blockers:
         return {"ready_for_manual_confirmation": False, "promotion_enabled": False,
@@ -90,7 +111,7 @@ def build_promotion_preview(assessment: dict) -> dict:
                            ("night", "Night time"), ("actual_instrument", "Actual instrument time")):
             value = values[key]
             if value is not None and validation_minutes is not None and value * 60 > validation_minutes + 1:
-                basis = "logged duration" if duration_only else "calculated OFF–ON air time"
+                basis = "logged duration" if (duration_only or out_in_only) else "calculated OFF–ON air time"
                 blockers.append(f"{label} cannot exceed {basis} ({validation_minutes} minutes) by more than one minute.")
         return values
 
@@ -98,6 +119,18 @@ def build_promotion_preview(assessment: dict) -> dict:
         block_minutes, air_minutes, logged_minutes = None, None, duration_minutes
         ordered_utc, local_values = [None] * 4, [None] * 4
         arrival_date = mapped["flight_date"]
+    elif out_in_only:
+        ordered_utc = [times["out"]["utc_candidate"]["utc"], None, None, times["in"]["utc_candidate"]["utc"]]
+        local_values = [times["out"]["utc_candidate"]["local"], None, None, times["in"]["utc_candidate"]["local"]]
+        try:
+            block_minutes = _minutes(ordered_utc[0], ordered_utc[3])
+        except ValueError:
+            block_minutes = None
+            blockers.append("OUT/IN UTC event sequence is invalid.")
+        if block_minutes is None or block_minutes <= 0:
+            blockers.append("Calculated OUT–IN block time must be greater than zero.")
+        air_minutes, logged_minutes = None, duration_minutes
+        arrival_date = times["in"].get("local_date")
     else:
         def utc(key): return times[key]["utc_candidate"]["utc"]
         def local(key): return times[key]["utc_candidate"]["local"]
@@ -121,11 +154,11 @@ def build_promotion_preview(assessment: dict) -> dict:
         arrival_date = times["in"].get("local_date")
         logged_minutes = duration_minutes if duration_minutes is not None else air_minutes
 
-    credit_values = credits(logged_minutes if duration_only else air_minutes)
+    credit_values = credits(logged_minutes if (duration_only or out_in_only) else air_minutes)
     if blockers:
         return {"ready_for_manual_confirmation": False, "promotion_enabled": False,
                 "blockers": list(dict.fromkeys(blockers)), "warnings": warnings, "candidate": None}
-    if not duration_only and duration_minutes is not None and abs(duration_minutes - air_minutes) > 5:
+    if full_event_timing and duration_minutes is not None and abs(duration_minutes - air_minutes) > 5:
         warnings.append("LogTen Total Time differs from the OFF/ON air-time calculation by more than five minutes.")
 
     source_total_time = next((item.get("original_value") for item in assessment.get("reconciliation", []) if item.get("target") == "total_time"), mapped.get("total_time") or None)
@@ -146,7 +179,7 @@ def build_promotion_preview(assessment: dict) -> dict:
         "pic_crew": mapped.get("pic_crew") or None, "sic_crew": mapped.get("sic_crew") or None,
         "remarks": mapped.get("remarks") or None,
         "source_only_columns": [item.get("source_column") for item in unmapped_columns],
-        "time_recording_mode": "duration_only" if duration_only else "out_off_on_in",
+        "time_recording_mode": "duration_only" if duration_only else ("out_in_only" if out_in_only else "out_off_on_in"),
         "source_total_time": source_total_time,
     }
     return {"ready_for_manual_confirmation": True, "promotion_enabled": False, "blockers": [],

@@ -299,7 +299,9 @@ def assess_logten_record(
             # full day too long; never treat it as an exact timestamp source.
             if len(sequences) > 1 and mapped.get("total_time"):
                 try:
-                    airborne_hours = float(mapped["total_time"])
+                    airborne_hours = (duration_minutes / 60) if duration_minutes is not None else None
+                    if airborne_hours is None:
+                        raise ValueError("Total Time is not a usable duration")
                     out_entries = [e for e in present_events if e[0] == "out"]
                     in_entries = [e for e in present_events if e[0] == "in"]
                     if out_entries and in_entries:
