@@ -72,7 +72,7 @@ export and reconciled against LogTen totals.
 
 ### Historical duration-only records
 
-Historical flights may have a supplied total duration without OUT/OFF/ON/IN events. The importer accepts explicit `HH:MM` durations (for example `01:35` = 95 minutes) and decimal-hour values (for example `1.6` = 96 minutes). The original source string remains in the immutable staged source row and is included in the promotion preview. When all four operational event fields are absent, the supplied duration is recorded as logged air time; block time and OUT/OFF/ON/IN timestamps remain unavailable. The app never synthesizes event timestamps. If only some event timestamps are present, promotion remains blocked until the source is corrected; missing events are never inferred. May 2017 is a review hint only, not a hard-coded cutoff. Each row's actual source fields determine its recording mode. Night, instrument and pilot credits remain subject to duration-based consistency checks.
+Historical flights may have a supplied total duration without OUT/OFF/ON/IN events. The importer accepts explicit `HH:MM` durations (for example `01:35` = 95 minutes) and decimal-hour values (for example `1.6` = 96 minutes). The original source string is retained in the immutable staged source row and in the promoted flight's `source_total_time` field, even if a review correction changes the value used for `logged_minutes`. A duration-only flight stores the supplied duration as `logged_minutes`; `block_minutes` and `air_minutes` remain NULL because neither can be derived from total duration alone. All four event timestamps remain NULL. Reports show Logged separately from Block and Air. Event-timed flights retain the existing OUT-to-IN block and OFF-to-ON air calculations. Mixed-era batches are supported. The app never synthesizes event timestamps. If only some event timestamps are present, promotion remains blocked until the source is corrected; missing events are never inferred. May 2017 is a review hint only, not a hard-coded cutoff. Each row's actual source fields determine its recording mode. Night, instrument and pilot credits remain subject to duration-based consistency checks.
 
 ## Install from GitHub
 
@@ -82,9 +82,9 @@ Repositories, and add the repository URL. To use a test channel, append
 `#branch-name` to the repository URL.
 
 The public Home Assistant deployment repository is
-https://github.com/m47v97vsms-lab/pilot-logbook-ha. No personal access token or
+`https://github.com/m47v97vsms-lab/pilot-logbook-ha`. No personal access token or
 authenticated Git transport is required for this repository. The private
-development repository remains separate and is not needed by Home Assistant.
+development source repository remains separate and is not needed by Home Assistant.
 
 ## Home Assistant access
 
@@ -97,7 +97,9 @@ host port or expose the service to the public internet.
 OUT/OFF/ON/IN timestamps are stored internally in UTC and displayed in airport
 local time. Verify time-zone and daylight-saving handling for each airport.
 Night and actual instrument values are recorded as hours in the UI and stored
-as minutes for reporting.
+as minutes for reporting. Each flight also retains `logged_minutes` separately
+from derived block and air time. Duration-only historical records contribute to
+Logged totals while Block and Air remain unavailable; no taxi time is inferred.
 
 ## FC View
 
