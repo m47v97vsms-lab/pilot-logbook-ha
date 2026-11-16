@@ -34,7 +34,7 @@ from fcv_oauth_flow import complete_authorization, FCVOAuthFlowError
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
 DB_PATH = os.path.join(DATA_DIR, "logbook_engine.sqlite3")
 BACKUP_DIR = os.path.join(DATA_DIR, "backups")
-CURRENT_SCHEMA_VERSION = 13
+CURRENT_SCHEMA_VERSION = 14
 app = Flask(__name__)
 def load_secret_key():
     configured = os.environ.get("SECRET_KEY")
@@ -463,6 +463,45 @@ def init_db():
         conn.execute("INSERT OR IGNORE INTO migration_history(version) VALUES (13)")
         conn.execute("DELETE FROM schema_version")
         conn.execute("INSERT INTO schema_version(version) VALUES (13)")
+    if current < 14:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        has_staged_imports = {"import_records", "import_batches"} <= tables
+        legacy_rows = conn.execute("""
+            SELECT id, air_minutes FROM flights
+            WHERE out_utc IS NULL AND off_utc IS NULL AND on_utc IS NULL AND in_utc IS NULL
+              AND block_minutes IS NULL AND air_minutes IS NOT NULL
+        """).fetchall()
+        for legacy in legacy_rows:
+            flight_id, air_minutes = legacy[0], legacy[1]
+            source_total_time = None
+            if has_staged_imports:
+                staged = conn.execute("""
+                    SELECT ir.raw_json, ib.field_mapping_json
+                    FROM import_records ir
+                    JOIN import_batches ib ON ib.id=ir.batch_id
+                    WHERE ir.promoted_flight_id=?
+                    ORDER BY ir.id DESC LIMIT 1
+                """, (flight_id,)).fetchone()
+                if staged:
+                    try:
+                        raw = json.loads(staged[0] or "{}")
+                        mapping = json.loads(staged[1] or "{}")
+                        source_column = mapping.get("total_time") or "Total Time"
+                        original = raw.get(source_column)
+                        source_total_time = None if original is None else str(original)
+                    except (TypeError, ValueError, AttributeError):
+                        source_total_time = None
+            conn.execute("""
+                UPDATE flights
+                SET logged_minutes=COALESCE(logged_minutes, ?),
+                    air_minutes=NULL,
+                    time_recording_mode='duration_only',
+                    source_total_time=COALESCE(source_total_time, ?)
+                WHERE id=?
+            """, (air_minutes, source_total_time, flight_id))
+        conn.execute("INSERT OR IGNORE INTO migration_history(version) VALUES (14)")
+        conn.execute("DELETE FROM schema_version")
+        conn.execute("INSERT INTO schema_version(version) VALUES (14)")
     for row in AIRPORTS:
         conn.execute("INSERT OR IGNORE INTO airports(icao,iata,name,timezone) VALUES(?,?,?,?)", row)
     # Import the user's LogTen Places export once per ICAO, preserving any existing airport record.
