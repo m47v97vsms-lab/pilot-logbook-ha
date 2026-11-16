@@ -54,13 +54,24 @@ def parse_logten(content: str | bytes, filename: str = "upload") -> dict[str, An
     if not headers or not any(h.strip() for h in headers):
         raise ValueError("The uploaded file has no usable header row.")
 
-    # Keep blank header columns too, but assign a stable name to each.
+    # Keep blank and duplicate columns addressable without allowing generated
+    # suffixes to collide with literal source header names.
+    reserved_names = {header for header in headers if header.strip()}
     names: list[str] = []
-    seen: Counter[str] = Counter()
+    used_names: set[str] = set()
     for index, header in enumerate(headers, start=1):
-        base = header.strip() or f"__blank_column_{index}"
-        seen[base] += 1
-        names.append(base if seen[base] == 1 else f"{base}__{seen[base]}")
+        base = header if header.strip() else f"__blank_column_{index}"
+        candidate = base
+        if candidate in used_names or (not header.strip() and candidate in reserved_names):
+            suffix = 2
+            candidate = f"{base}__{suffix}"
+            while candidate in used_names or candidate in reserved_names:
+                suffix += 1
+                candidate = f"{base}__{suffix}"
+        names.append(candidate)
+        used_names.add(candidate)
+    header_count = len(names)
+    extra_names: dict[int, str] = {}
 
     rows: list[ParsedRow] = []
     blank_rows = 0
@@ -69,10 +80,21 @@ def parse_logten(content: str | bytes, filename: str = "upload") -> dict[str, An
             blank_rows += 1
             continue
         # Retain all source cells, including any unexpected extra columns.
-        padded = list(values[:len(names)]) + [""] * max(0, len(names) - len(values))
-        raw = {names[i]: padded[i] for i in range(len(names))}
-        for extra_index, value in enumerate(values[len(names):], start=1):
-            raw[f"__extra_column_{extra_index}"] = value
+        padded = list(values[:header_count]) + [""] * max(0, header_count - len(values))
+        raw = {names[i]: padded[i] for i in range(header_count)}
+        for extra_index, value in enumerate(values[header_count:], start=1):
+            if extra_index not in extra_names:
+                base = f"__extra_column_{extra_index}"
+                candidate = base
+                if candidate in used_names or candidate in reserved_names:
+                    suffix = 2
+                    while candidate in used_names or candidate in reserved_names:
+                        candidate = f"{base}__{suffix}"
+                        suffix += 1
+                extra_names[extra_index] = candidate
+                used_names.add(candidate)
+                names.append(candidate)
+            raw[extra_names[extra_index]] = value
 
         mapping = default_field_mapping(raw.keys())
         mapped = {
@@ -99,13 +121,19 @@ def parse_logten(content: str | bytes, filename: str = "upload") -> dict[str, An
             warnings.append("Missing date.")
         if not mapped.get("total_time", ""):
             warnings.append("Missing total time.")
-        if not mapped.get("out", "") and not mapped.get("in", ""):
-            warnings.append("Missing OUT and IN times.")
         if remarks:
             # Remarks are retained verbatim; no semantic parsing is attempted.
             pass
 
         rows.append(ParsedRow(source_row, _fingerprint(raw), raw, classification, warnings))
+
+    # Extra cells may first appear on a later record. Give every record the
+    # complete source-column set so the first record cannot hide a mappable field.
+    if extra_names:
+        for row in rows:
+            for column in extra_names.values():
+                row.raw.setdefault(column, "")
+            row.fingerprint = _fingerprint(row.raw)
 
     if not rows:
         raise ValueError("No non-empty records were found below the header.")

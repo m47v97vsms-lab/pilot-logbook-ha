@@ -27,6 +27,18 @@ class FCVError(RuntimeError):
     """An FC View API or configuration error."""
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Never forward OAuth credentials or bearer tokens to a redirect target."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _open_without_redirects(request, *, timeout: int):
+    opener = urllib.request.build_opener(_NoRedirectHandler)
+    return opener.open(request, timeout=timeout)
+
+
 def configuration() -> dict[str, str]:
     client_id = setting("FCV_CLIENT_ID", "fcv_client_id")
     client_secret = setting("FCV_CLIENT_SECRET", "fcv_client_secret")
@@ -64,7 +76,7 @@ def _request(url: str, *, method: str = "GET", form: dict[str, str] | None = Non
         headers["Authorization"] = f"Bearer {access_token}"
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with _open_without_redirects(request, timeout=timeout) as response:
             payload = response.read(2 * 1024 * 1024 + 1)
             if len(payload) > 2 * 1024 * 1024:
                 raise FCVError("FC View response exceeded the 2 MB safety limit.")
@@ -76,6 +88,8 @@ def _request(url: str, *, method: str = "GET", form: dict[str, str] | None = Non
         raise
     except Exception as exc:
         code = getattr(exc, "code", None)
+        if code and 300 <= code < 400:
+            raise FCVError("FC View attempted an unexpected redirect; the request was not followed.") from exc
         if code == 429:
             raise FCVError("FC View rate limit reached; retry during the next permitted sync window.") from exc
         if code in (400, 401, 403):
@@ -159,7 +173,7 @@ def revoke_access(refresh_token: str) -> dict[str, Any]:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
+        with _open_without_redirects(request, timeout=20) as response:
             result = json.loads(response.read(64 * 1024).decode("utf-8"))
     except Exception as exc:
         raise FCVError("FC View access revocation failed; retain credentials until the result is confirmed.") from exc

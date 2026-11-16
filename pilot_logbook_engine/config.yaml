@@ -1,7 +1,7 @@
-name: "Pilot Logbook"
-version: "0.4.0-dev35"
+name: "Pilot Logbook Engine"
+version: "0.4.0-dev48"
 slug: "pilot_logbook_engine"
-description: "Personal pilot logbook with automatic time calculations, solar night estimates, atlas route map, backups, and Home Assistant sidebar access."
+description: "Private pilot logbook with automatic time calculations, solar night estimates, atlas route map, backups, and Home Assistant sidebar access."
 arch:
   - amd64
 startup: application

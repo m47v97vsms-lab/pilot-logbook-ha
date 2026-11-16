@@ -4,7 +4,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 import sqlite3
+import stat
 from datetime import datetime, timezone
 from typing import Any
 
@@ -15,34 +17,85 @@ class FCVStorageError(RuntimeError):
     """Safe, user-displayable FC View storage error."""
 
 
+def _create_key_file_if_missing(key_path: str) -> None:
+    """Publish a fully written owner-only key atomically; concurrent starters share one key."""
+    directory = os.path.dirname(key_path)
+    temporary = os.path.join(
+        directory, f".{os.path.basename(key_path)}.{secrets.token_hex(8)}.tmp"
+    )
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(temporary, flags, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            descriptor = -1
+            handle.write(Fernet.generate_key())
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            # A hard link is atomic and never replaces a key another worker won.
+            os.link(temporary, key_path)
+        except FileExistsError:
+            pass
+        else:
+            directory_fd = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+
+def _read_key_file(key_path: str) -> str:
+    """Read only a regular, non-symlink key file with no group/other permissions."""
+    if os.path.islink(key_path):
+        raise FCVStorageError("FC View encryption key must not be a symbolic link.")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(key_path, flags)
+    except OSError as exc:
+        if os.path.islink(key_path):
+            raise FCVStorageError("FC View encryption key must not be a symbolic link.") from exc
+        raise FCVStorageError("FC View encryption key could not be read from persistent add-on storage.") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise FCVStorageError("FC View encryption key must be a regular file.")
+        if stat.S_IMODE(metadata.st_mode) & 0o077:
+            raise FCVStorageError("FC View encryption key must have owner-only permissions (0600).")
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = -1
+            try:
+                return handle.read(256).decode("ascii").strip()
+            except UnicodeDecodeError as exc:
+                raise FCVStorageError("FC View encryption key is not valid ASCII.") from exc
+    except OSError as exc:
+        raise FCVStorageError("FC View encryption key could not be read from persistent add-on storage.") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
 def _fernet() -> Fernet:
-    """Use an explicit key when configured; otherwise create one in persistent add-on data."""
+    """Use an explicit key when configured; otherwise create one securely in persistent app data."""
     key = os.environ.get("FCV_TOKEN_ENCRYPTION_KEY", "").strip()
     if not key:
         data_dir = os.environ.get("DATA_DIR", "/data")
-        os.makedirs(data_dir, exist_ok=True)
-        key_path = os.path.join(data_dir, "fcv_token_encryption.key")
         try:
-            fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except FileExistsError:
-            fd = None
-        if fd is not None:
-            try:
-                with os.fdopen(fd, "wb") as handle:
-                    handle.write(Fernet.generate_key())
-                    handle.flush()
-                    os.fsync(handle.fileno())
-            except Exception:
-                try:
-                    os.unlink(key_path)
-                except OSError:
-                    pass
-                raise
-        try:
-            with open(key_path, "rb") as handle:
-                key = handle.read(256).decode("ascii").strip()
-        except (OSError, UnicodeDecodeError) as exc:
-            raise FCVStorageError("FC View encryption key could not be read from persistent add-on storage.") from exc
+            os.makedirs(data_dir, exist_ok=True)
+            key_path = os.path.join(data_dir, "fcv_token_encryption.key")
+            if not os.path.lexists(key_path):
+                _create_key_file_if_missing(key_path)
+            key = _read_key_file(key_path)
+        except FCVStorageError:
+            raise
+        except OSError as exc:
+            raise FCVStorageError("FC View encryption key could not be created or read in persistent add-on storage.") from exc
     try:
         return Fernet(key.encode("ascii"))
     except (ValueError, UnicodeEncodeError) as exc:
