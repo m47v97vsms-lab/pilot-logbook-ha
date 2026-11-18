@@ -254,7 +254,7 @@ function renderDirectoryIndex(targetId,items,kind,searchId,primary,secondary){
    return '<button type="button" class="directory-link" data-directory-kind="'+kind+'" data-directory-value="'+esc(value)+'"><span><b>'+esc(title)+'</b><small>'+esc(detail)+'</small></span><span class="directory-count">'+count.toLocaleString()+'</span></button>';
   }).join(''):'<p class="muted">No matching entries.</p>';
  };
- if(search)search.addEventListener('input',draw);
+ if(search)search.oninput=draw;
  draw();
 }
 async function loadBrowseOptions(){
