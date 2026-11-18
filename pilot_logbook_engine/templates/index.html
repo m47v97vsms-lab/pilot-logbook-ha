@@ -19,27 +19,52 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .skip-link:focus{left:12px;top:12px;width:auto;height:auto;padding:12px;background:#fff;color:#111;z-index:1000;border-radius:8px}
 .field-label{display:block;color:#c3cee0;font-size:.9rem;margin:12px 0 6px}
 #flight-browser,#airport-directory,#flight,#aircraft-directory,#people-directory,#analyze,#saved-flights,#fcv-panel,#logten-import,#backup-panel{scroll-margin-top:14px}
+
+/* LogTen-inspired directory navigation and index views */
+body{max-width:1500px;padding:18px}
+#app-content{display:grid;grid-template-columns:218px minmax(0,1fr);grid-template-rows:auto 1fr;column-gap:20px;align-items:start}
+#app-content>.toolbar{grid-column:1/-1}
+#logbook-navigation{grid-column:1;grid-row:2;position:sticky;top:12px;display:flex;flex-direction:column;align-items:stretch;gap:5px;margin:0;padding:12px;max-height:calc(100vh - 24px);overflow:auto;border-radius:16px}
+#logbook-navigation .nav-label{flex:0 0 auto;margin:13px 8px 5px}
+#logbook-navigation .nav-label:first-child{margin-top:4px}
+#logbook-navigation a{justify-content:flex-start;border:0;border-radius:9px;background:transparent;padding:10px 12px;min-height:42px}
+#logbook-navigation a:hover,#logbook-navigation a:focus-visible{background:#26354b}
+#main-content{grid-column:2;grid-row:2;min-width:0}
+.directory-toolbar{max-width:540px;margin:14px 0}
+.directory-index{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:7px;margin:12px 0 20px}
+.directory-link{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;min-width:0;margin:0;padding:11px 13px;text-align:left;background:#101a2a;border:1px solid #2b3a52;border-radius:11px}
+.directory-link:hover{background:#26354b;border-color:#526b91}
+.directory-link span:first-child{min-width:0;display:flex;flex-direction:column;gap:3px}
+.directory-link small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#9eabc0}
+.directory-count{flex:0 0 auto;color:#a9c5ff;font-variant-numeric:tabular-nums}
+.directory-maintenance{border-top:1px solid #2b3a52;padding-top:12px}
+.directory-maintenance summary{cursor:pointer;color:#a9c5ff;font-weight:650;padding:7px 0}
+@media(max-width:820px){
+ body{padding:10px}
+ #app-content{display:flex;flex-direction:column;gap:0}
+ #app-content>.toolbar{width:100%}
+ #logbook-navigation{position:static;width:100%;max-height:none;flex-direction:row;flex-wrap:nowrap;overflow-x:auto;align-items:center;margin:8px 0 12px;scrollbar-width:thin}
+ #logbook-navigation .nav-label{display:none}
+ #logbook-navigation a{flex:0 0 auto;white-space:nowrap}
+ #main-content{width:100%}
+ .directory-index{grid-template-columns:repeat(auto-fill,minmax(190px,1fr))}
+}
 </style><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"></head><body>
 <section id="auth" class="card auth" hidden><h1>Personal Pilot Logbook</h1><p class="muted" id="auth-copy">Secure private logbook access.</p><label for="auth-password">Password</label><input id="auth-password" type="password" autocomplete="current-password" minlength="12"><button id="auth-submit" type="button">Continue</button><div id="auth-message" class="status" role="status"></div></section>
 <div id="app-content" hidden>
 <a class="skip-link" href="#main-content">Skip to main content</a>
-<div class="toolbar"><div><h1>Personal Pilot Logbook</h1><p class="muted">Development build 0.4.0-dev56 · expandable airport directory · automatic calculations · aviation atlas · backups</p>
+<div class="toolbar"><div><h1>Personal Pilot Logbook</h1><p class="muted">Development build 0.4.0-dev57 · expandable airport directory · automatic calculations · aviation atlas · backups</p>
 </div></div>
-<nav id="logbook-navigation" aria-label="Logbook sections">
-<span class="nav-label">Logbook sections — jump to</span>
-<a href="#airport-directory">Airports</a>
-<a href="#flight">Flight entry</a>
-<a href="#aircraft-directory">Aircraft</a>
-<a href="#people-directory">People</a>
-<a href="#analyze">Analysis &amp; map</a>
-<a href="#flight-browser">Browse flights</a>
-<a href="#saved-flights">Saved flights</a>
-<a href="#fcv-panel">FC View</a>
-<a href="#logten-import">LogTen import</a>
-<a href="#backup-panel">Backups</a>
+<nav id="logbook-navigation" aria-label="Logbook navigation">
+<span class="nav-label">Logbook</span>
+<a href="#flight">New flight</a><a href="#flight-browser">Flights &amp; duties</a><a href="#analyze">Analyze</a>
+<span class="nav-label">Directories</span>
+<a href="#people-directory">People</a><a href="#aircraft-directory">Aircraft</a><a href="#airport-directory">Places &amp; airports</a>
+<span class="nav-label">Data &amp; tools</span>
+<a href="#saved-flights">Saved flights</a><a href="#fcv-panel">FC View</a><a href="#logten-import">LogTen import</a><a href="#backup-panel">Backups</a>
 </nav>
 <main id="main-content" tabindex="-1">
-<section class="card" id="airport-directory"><h2>Airport directory</h2><p class="muted">Search your imported LogTen places and add destinations as you encounter them. Records without a verified time zone cannot be used for local-time conversion yet.</p><div class="grid"><div><label for="directory-search">Find an airport</label><input id="directory-search" placeholder="ICAO, IATA, airport or city"></div><div><span class="field-spacer" aria-hidden="true"></span><button type="button" id="new-airport">Add a destination</button></div></div><div id="directory-results" class="tiny muted"></div><form id="airport-editor" hidden><h3>Add airport</h3><div class="inline"><input id="online-airport-code" placeholder="Enter ICAO or IATA code"><button type="button" id="lookup-airport">Look up online</button></div><div id="online-lookup-status" class="tiny muted"></div><div class="grid"><div><label>ICAO code *</label><input name="icao" maxlength="4" required></div><div><label>IATA code</label><input name="iata" maxlength="3"></div><div><label>Airport name *</label><input name="name" required></div><div><label>City</label><input name="city"></div><div><label>Province / state</label><input name="province"></div><div><label>Country</label><input name="country"></div><div><label>IANA time zone</label><input name="timezone" placeholder="America/Edmonton"></div><div><label>Elevation (ft)</label><input name="elevation_ft" type="number"></div><div><label>Latitude</label><input name="latitude" type="number" step="any"></div><div><label>Longitude</label><input name="longitude" type="number" step="any"></div><div><label>Magnetic variation</label><input name="magnetic_variation"></div><div><label>Beacon</label><input name="beacon"></div></div><label>Notes</label><input name="notes"><button type="submit">Save airport</button><button type="button" id="cancel-airport">Cancel</button><div id="airport-editor-status" class="status" role="status"></div></form></section>
+<section class="card" id="airport-directory"><h2>Places</h2><p class="muted">Browse every airport used in your logbook. Select a place to see all departures and arrivals, then maintain airport details below.</p><div class="directory-toolbar"><label for="place-index-search">Find a place</label><input id="place-index-search" type="search" placeholder="ICAO, IATA, city or airport name"></div><div id="place-index" class="directory-index" aria-live="polite">Loading places…</div><details class="directory-maintenance"><summary>Airport details &amp; maintenance</summary><div class="grid"><div><label for="directory-search">Find an airport</label><input id="directory-search" placeholder="ICAO, IATA, airport or city"></div><div><span class="field-spacer" aria-hidden="true"></span><button type="button" id="new-airport">Add a destination</button></div></div><div id="directory-results" class="tiny muted"></div><form id="airport-editor" hidden><h3>Add airport</h3><div class="inline"><input id="online-airport-code" placeholder="Enter ICAO or IATA code"><button type="button" id="lookup-airport">Look up online</button></div><div id="online-lookup-status" class="tiny muted"></div><div class="grid"><div><label>ICAO code *</label><input name="icao" maxlength="4" required></div><div><label>IATA code</label><input name="iata" maxlength="3"></div><div><label>Airport name *</label><input name="name" required></div><div><label>City</label><input name="city"></div><div><label>Province / state</label><input name="province"></div><div><label>Country</label><input name="country"></div><div><label>IANA time zone</label><input name="timezone" placeholder="America/Edmonton"></div><div><label>Elevation (ft)</label><input name="elevation_ft" type="number"></div><div><label>Latitude</label><input name="latitude" type="number" step="any"></div><div><label>Longitude</label><input name="longitude" type="number" step="any"></div><div><label>Magnetic variation</label><input name="magnetic_variation"></div><div><label>Beacon</label><input name="beacon"></div></div><label>Notes</label><input name="notes"><button type="submit">Save airport</button><button type="button" id="cancel-airport">Cancel</button><div id="airport-editor-status" class="status" role="status"></div></form></details></section>
 <form id="flight" class="card">
 <h2>Flight details</h2><div class="grid">
 <div><label>Flight date — departure local</label><input type="date" name="flight_date" required></div>
@@ -73,10 +98,10 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 <h2>Approaches</h2><div id="approach-rows"></div><button type="button" id="add-approach">Add approach detail</button>
 <label>Remarks</label><input name="remarks"><button type="submit" id="save-flight">Save test flight</button> <button type="button" id="cancel-edit" hidden>Cancel edit</button><div id="message" class="status" role="status"></div>
 </form>
-<section class="card" id="aircraft-directory"><h2>Aircraft directory</h2><p class="muted">Add or update registrations. Deactivate records instead of deleting aircraft used in historical flights.</p>
-<div class="grid"><div><label>Registration</label><input id="dir-air-reg" maxlength="16" placeholder="C-FABC"></div><div><label>Aircraft type</label><input id="dir-air-type" maxlength="40" placeholder="B737-800"></div><div><label>Make / model</label><input id="dir-air-model" maxlength="100"></div><div><label>Notes</label><input id="dir-air-notes" maxlength="500"></div><div><label>Status</label><select id="dir-air-active"><option value="1">Active</option><option value="0">Inactive</option></select></div></div><button type="button" id="dir-air-save">Save aircraft</button><button type="button" id="dir-air-clear">Clear</button><div id="aircraft-management" class="muted"></div></section>
-<section class="card" id="people-directory"><h2>People directory</h2><p class="muted">Maintain crew names and employee IDs. Historical flight crew entries remain intact if a person is deactivated.</p>
-<div class="grid"><div><label>Full name</label><input id="dir-person-name" maxlength="120"></div><div><label>Employee ID</label><input id="dir-person-employee" maxlength="80"></div><div><label>Default role</label><select id="dir-person-role"><option value="">No default</option><option>PIC</option><option>SIC</option><option>RELIEF</option><option>INSTRUCTOR</option><option>CHECK_PILOT</option><option>OBSERVER</option><option>OTHER</option></select></div><div><label>Notes</label><input id="dir-person-notes" maxlength="500"></div><div><label>Status</label><select id="dir-person-active"><option value="1">Active</option><option value="0">Inactive</option></select></div></div><button type="button" id="dir-person-save">Save person</button><button type="button" id="dir-person-clear">Clear</button><div id="people-management" class="muted"></div></section>
+<section class="card" id="aircraft-directory"><h2>Aircraft</h2><p class="muted">Browse aircraft in your logbook and filter flights by registration or aircraft type. Historical flight records remain intact when directory entries are deactivated.</p><div class="directory-toolbar"><label for="aircraft-index-search">Find an aircraft</label><input id="aircraft-index-search" type="search" placeholder="Registration or aircraft type"></div><div id="aircraft-index" class="directory-index" aria-live="polite">Loading aircraft…</div><details class="directory-maintenance"><summary>Aircraft details &amp; maintenance</summary>
+<div class="grid"><div><label>Registration</label><input id="dir-air-reg" maxlength="16" placeholder="C-FABC"></div><div><label>Aircraft type</label><input id="dir-air-type" maxlength="40" placeholder="B737-800"></div><div><label>Make / model</label><input id="dir-air-model" maxlength="100"></div><div><label>Notes</label><input id="dir-air-notes" maxlength="500"></div><div><label>Status</label><select id="dir-air-active"><option value="1">Active</option><option value="0">Inactive</option></select></div></div><button type="button" id="dir-air-save">Save aircraft</button><button type="button" id="dir-air-clear">Clear</button><div id="aircraft-management" class="muted"></div></details></section>
+<section class="card" id="people-directory"><h2>People</h2><p class="muted">Browse crew members and open the flights they appear on. Legacy crew names from imported records are included even if they have not been added to the people directory.</p><div class="directory-toolbar"><label for="people-index-search">Find a person</label><input id="people-index-search" type="search" placeholder="Name or employee ID"></div><div id="people-index" class="directory-index" aria-live="polite">Loading people…</div><details class="directory-maintenance"><summary>People details &amp; maintenance</summary>
+<div class="grid"><div><label>Full name</label><input id="dir-person-name" maxlength="120"></div><div><label>Employee ID</label><input id="dir-person-employee" maxlength="80"></div><div><label>Default role</label><select id="dir-person-role"><option value="">No default</option><option>PIC</option><option>SIC</option><option>RELIEF</option><option>INSTRUCTOR</option><option>CHECK_PILOT</option><option>OBSERVER</option><option>OTHER</option></select></div><div><label>Notes</label><input id="dir-person-notes" maxlength="500"></div><div><label>Status</label><select id="dir-person-active"><option value="1">Active</option><option value="0">Inactive</option></select></div></div><button type="button" id="dir-person-save">Save person</button><button type="button" id="dir-person-clear">Clear</button><div id="people-management" class="muted"></div></details></section>
 <section class="card" id="analyze"><h2>Analyze</h2><p class="muted">The selected departure-date range applies to both the summary and route map.</p>
 <div class="inline" id="range-presets"><button type="button" data-range="7">Last 7 days</button><button type="button" data-range="28">Last 28 days</button><button type="button" data-range="12m">Last 12 months</button><button type="button" data-range="ytd">Year to date</button><button type="button" data-range="all">Lifetime</button><button type="button" data-range="custom">Custom</button></div>
 <div class="grid"><div><label>Start date</label><input type="date" id="report-start"></div><div><label>End date</label><input type="date" id="report-end"></div></div><button type="button" id="report-run">Update analysis</button><div id="report-output" class="muted"></div>
@@ -218,6 +243,20 @@ async function runReport(){const start=document.querySelector('#report-start').v
 document.querySelector('#report-run').onclick=()=>runReport().catch(e=>setStatus(e.message,'error'));
 const refreshBase=refresh;refresh=async()=>{await refreshBase();await loadManagement()};
 let browseOffset=0,browseLimit=50,browseTotal=0,browseTimer=null;
+function renderDirectoryIndex(targetId,items,kind,searchId,primary,secondary){
+ const root=document.querySelector('#'+targetId),search=document.querySelector('#'+searchId);
+ const draw=()=>{
+  const q=(search?.value||'').trim().toLocaleLowerCase();
+  const shown=items.filter(x=>(primary(x)+' '+secondary(x)).toLocaleLowerCase().includes(q));
+  root.innerHTML=shown.length?shown.map(x=>{
+   const value=kind==='person'?(x.id===null?'name:'+x.full_name:String(x.id)):kind==='airport'?x.icao:x.value;
+   const title=primary(x),detail=secondary(x),count=Number(x.flights||0);
+   return '<button type="button" class="directory-link" data-directory-kind="'+kind+'" data-directory-value="'+esc(value)+'"><span><b>'+esc(title)+'</b><small>'+esc(detail)+'</small></span><span class="directory-count">'+count.toLocaleString()+'</span></button>';
+  }).join(''):'<p class="muted">No matching entries.</p>';
+ };
+ if(search)search.addEventListener('input',draw);
+ draw();
+}
 async function loadBrowseOptions(){
  const r=await fetch('api/flights/filter-options'),j=await r.json();
  if(!r.ok)throw new Error(j.error||'Could not load flight directory filters');
@@ -225,7 +264,19 @@ async function loadBrowseOptions(){
  fill('browse-person',j.people||[],x=>x.id===null?'name:'+x.full_name:String(x.id),x=>x.full_name+' · '+x.flights+' flights','All crew');
  fill('browse-aircraft',j.aircraft||[],x=>x.value,x=>x.value+' · '+x.flights+' flights','All aircraft');
  fill('browse-airport',j.airports||[],x=>x.icao,x=>x.icao+(x.iata?' / '+x.iata:'')+' · '+x.name+' · '+x.flights+' movements','All airports');
+ renderDirectoryIndex('people-index',j.people||[],'person','people-index-search',x=>x.full_name,x=>(x.flights||0)+' flights');
+ renderDirectoryIndex('aircraft-index',j.aircraft||[],'aircraft','aircraft-index-search',x=>x.value,x=>(x.kind||'Aircraft')+' · '+(x.flights||0)+' flights');
+ renderDirectoryIndex('place-index',j.airports||[],'airport','place-index-search',x=>x.icao+(x.iata?' / '+x.iata:''),x=>x.name+' · '+(x.flights||0)+' movements');
 }
+document.querySelectorAll('.directory-index').forEach(root=>root.addEventListener('click',async ev=>{
+ const b=ev.target.closest('[data-directory-kind]');if(!b)return;
+ const kind=b.dataset.directoryKind,value=b.dataset.directoryValue;
+ if(kind==='person')document.querySelector('#browse-person').value=value;
+ if(kind==='aircraft')document.querySelector('#browse-aircraft').value=value;
+ if(kind==='airport')document.querySelector('#browse-airport').value=value;
+ await runBrowse(true);
+ document.querySelector('#flight-browser').scrollIntoView({behavior:'smooth',block:'start'});
+}));
 async function runBrowse(reset=true){
  if(reset)browseOffset=0;
  const qs=new URLSearchParams({limit:String(browseLimit),offset:String(browseOffset)});
