@@ -1,5 +1,5 @@
 name: "Pilot Logbook"
-version: "0.4.0-dev58"
+version: "0.4.0-dev60"
 slug: "pilot_logbook_engine"
 description: "Personal pilot logbook with automatic time calculations, solar night estimates, atlas route map, backups, and Home Assistant sidebar access."
 arch:
@@ -17,12 +17,10 @@ options:
   fcv_client_secret: ""
   fcv_redirect_uri: ""
   fcv_callback_relay_secret: ""
-  enable_logten_promotion: false
 schema:
   fcv_client_id: str
   fcv_client_secret: password
   fcv_redirect_uri: str
   fcv_callback_relay_secret: password
-  enable_logten_promotion: bool
 map:
   - type: data
