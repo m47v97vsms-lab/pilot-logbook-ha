@@ -1411,20 +1411,31 @@ def _logten_auto_import_batch(conn, batch_id):
             continue
         seen_fingerprints.add(fingerprint)
         mapping = _logten_batch_mapping(conn, batch_id, raw)
-        assessment = assess_logten_record(
-            raw, json.loads(row["corrections_json"] or "{}"), airports, mapping, True
-        )
-        classification = _logten_classification(row["classification"], assessment)
-        if classification != "flight_candidate":
-            counts["non_flight"] += 1
+        try:
+            assessment = assess_logten_record(
+                raw, json.loads(row["corrections_json"] or "{}"), airports, mapping, True
+            )
+            classification = _logten_classification(row["classification"], assessment)
+            if classification != "flight_candidate":
+                counts["non_flight"] += 1
+                continue
+            assessment["classification"] = classification
+            preview = build_promotion_preview(assessment)
+            candidate = preview.get("candidate")
+            duplicate_review = _logten_duplicate_review(
+                conn, batch_id, row["id"], fingerprint, candidate,
+                assessment.get("mapped"), assessment.get("resolved_airports")
+            )
+        except (ValueError, TypeError, KeyError, OverflowError) as exc:
+            # A malformed value in one historical source row must not roll back
+            # thousands of otherwise valid flights in this one-time migration.
+            counts["incomplete"] += 1
+            reason = str(exc).strip() or "Source values could not be interpreted."
+            exceptions.append({
+                "source_row": row["source_row"],
+                "reason": f"Could not safely interpret this record: {reason[:240]}",
+            })
             continue
-        assessment["classification"] = classification
-        preview = build_promotion_preview(assessment)
-        candidate = preview.get("candidate")
-        duplicate_review = _logten_duplicate_review(
-            conn, batch_id, row["id"], fingerprint, candidate,
-            assessment.get("mapped"), assessment.get("resolved_airports")
-        )
         # A possible match is deliberately held for a quick exception review;
         # exact matches and repeated source rows are never imported twice.
         if duplicate_review.get("has_exact_duplicate") or duplicate_review.get("has_staged_duplicate") \
