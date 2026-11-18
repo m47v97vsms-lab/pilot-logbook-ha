@@ -1492,8 +1492,8 @@ def _logten_auto_import_batch(conn, batch_id):
                             flight_id,person_name,role,pic_credit,sic_credit,pf_credit,pm_credit,sort_order
                         ) VALUES(?,?,?,?,?,?,?,?)""",
                         (flight_id, crew_name, role,
-                         candidate.get("pic") if credit_key == "pic" else 0,
-                         candidate.get("sic") if credit_key == "sic" else 0, 0, 0, sort_order),
+                         (candidate.get("pic") or 0) if credit_key == "pic" else 0,
+                         (candidate.get("sic") or 0) if credit_key == "sic" else 0, 0, 0, sort_order),
                     )
             # Source row remains intact and linked to the saved canonical flight.
             conn.execute(
