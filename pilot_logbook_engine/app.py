@@ -162,7 +162,6 @@ def _logten_duplicate_review(conn, batch_id, record_id, fingerprint, candidate,
             (flight_date, departure, arrival, candidate["logged_minutes"]),
         ).fetchall()
         known_ids = {item["id"] for item in exact_matches + possible_matches}
-        registration = candidate.get("aircraft_registration")
         for row in duration_rows:
             item = dict(row)
             if item["id"] in known_ids:
