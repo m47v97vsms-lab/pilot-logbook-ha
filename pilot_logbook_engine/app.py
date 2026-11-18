@@ -145,9 +145,13 @@ def _logten_duplicate_review(conn, batch_id, record_id, fingerprint, candidate,
         ).fetchall()
         exact_ids = {item["id"] for item in exact_matches}
         possible_matches = [dict(row) for row in possible_rows if row["id"] not in exact_ids]
+    # A registration is not a unique flight identifier: an aircraft may
+    # fly several same-day circuits with identical rounded durations. For
+    # duration-only history, only compare this secondary heuristic when a
+    # flight number exists; exact source fingerprints are checked separately.
     if (candidate.get("time_recording_mode") == "duration_only"
             and candidate.get("logged_minutes") is not None
-            and flight_date and departure and arrival):
+            and flight_date and departure and arrival and flight_number):
         duration_rows = conn.execute(
             """SELECT id,flight_date,flight_number,departure_icao,arrival_icao,
                       out_utc,in_utc,aircraft_registration
@@ -163,10 +167,7 @@ def _logten_duplicate_review(conn, batch_id, record_id, fingerprint, candidate,
             item = dict(row)
             if item["id"] in known_ids:
                 continue
-            identifier_matches = bool(
-                (flight_number and item.get("flight_number") == flight_number)
-                or (registration and item.get("aircraft_registration") == registration)
-            )
+            identifier_matches = bool(flight_number and item.get("flight_number") == flight_number)
             (exact_matches if identifier_matches else possible_matches).append(item)
     return {
         "identical_staged_records": staged_matches,
