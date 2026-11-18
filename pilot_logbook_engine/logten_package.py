@@ -86,6 +86,10 @@ def _read_tabular(content: str | bytes, filename: str) -> dict[str, Any]:
     }
 
 
+def _norm(value: str) -> str:
+    return re.sub(r"\\s+", " ", str(value or "").strip()).casefold()
+
+
 def _value(row: dict[str, str], *names: str) -> str:
     wanted = {re.sub(r"[^a-z0-9]", "", name.casefold()) for name in names}
     for key, value in row.items():
@@ -100,7 +104,7 @@ def _index(rows: list[dict[str, str]], *keys: str) -> dict[str, list[dict[str, s
     for row in rows:
         value = _value(row, *keys)
         if value:
-            result.setdefault(value.casefold(), []).append(row)
+            result.setdefault(_norm(value), []).append(row)
     return result
 
 
@@ -164,7 +168,7 @@ def parse_logten_package(files: list[dict[str, Any]]) -> dict[str, Any]:
         for label in ("ICAO ID", "IATA ID"):
             code = _value(row, label)
             if code:
-                place_index.setdefault(code.casefold(), []).append(row)
+                place_index.setdefault(_norm(code), []).append(row)
 
     diagnostics = Counter()
     unresolved_crew = set()
@@ -182,7 +186,7 @@ def parse_logten_package(files: list[dict[str, Any]]) -> dict[str, Any]:
             if not value:
                 continue
             diagnostics["flight_reference_checks"] += 1
-            matches = index.get(value.casefold(), [])
+            matches = index.get(_norm(value), [])
             if not matches:
                 unresolved.add(value)
             elif len(matches) > 1:
@@ -224,6 +228,6 @@ def parse_logten_package(files: list[dict[str, Any]]) -> dict[str, Any]:
         },
         "duplicate_reference_keys": duplicate_reference_keys,
         "diagnostics": dict(diagnostics),
-        "source_rows_retained": True,
+        "source_rows_parsed": True,\n        "source_data_persisted": False,
         "note": "No canonical flight, crew, aircraft, or airport records were created or modified.",
     }
