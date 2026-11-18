@@ -40,6 +40,20 @@ class LogTenPackageTests(unittest.TestCase):
         result = parse_logten_package(self._files())
         self.assertEqual(result["unmatched"]["crew_names"], [])
 
+
+    def test_aircraft_type_is_resolved_through_aircraft_reference(self):
+        files = self._files()
+        files[0]["content"] = (
+            "flight_flightDate\\t flight_from\\t flight_to\\t flight_selectedCrewPIC"
+            "\\t flight_selectedCrewSIC\\t aircraft_aircraftID\\taircraftType_type\\n"
+            "2020-01-01\\tCYYC\\tCYYC\\tPILOT  ONE\\t\\tC-GABC\\t\\n"
+        )
+        files[1]["content"] = "Name\\tID\\nPILOT ONE\\t1\\n"
+        result = parse_logten_package(files)
+        self.assertEqual(result["unmatched"]["crew_names"], [])
+        self.assertEqual(result["unmatched"]["aircraft_or_type_values"], [])
+        self.assertFalse(result["source_data_persisted"])
+
     def test_missing_required_companion_is_reported(self):
         with self.assertRaisesRegex(ValueError, "Missing required"):
             parse_logten_package(self._files()[:-2])
