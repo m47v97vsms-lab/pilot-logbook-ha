@@ -217,7 +217,13 @@ def assess_logten_record(
         errors.append(f"Departure airport '{mapped['departure']}' is not in the airport directory.")
     if not arr:
         errors.append(f"Arrival airport '{mapped['arrival']}' is not in the airport directory.")
+    # Historical duration-only records have no event timestamps to convert.
+    # Their source duration and airport codes are sufficient; requiring an IANA
+    # zone would needlessly reject LogTen Places entries whose timezone is blank.
+    has_event_times = any(str(mapped.get(field) or "").strip() for field in ("out", "off", "on", "in"))
     for label, airport in (("Departure", dep), ("Arrival", arr)):
+        if not has_event_times:
+            continue
         if airport and not (airport.get("timezone") or "").strip():
             errors.append(f"{label} airport {airport['icao']} has no verified time zone.")
         elif airport:
