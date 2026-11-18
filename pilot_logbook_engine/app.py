@@ -15,6 +15,7 @@ from ingress_security import is_trusted_ingress_proxy
 from logten_import import parse_logten
 from logten_validation import assess_logten_record, FIELD_MAP, default_field_mapping, validate_field_mapping
 from logten_promotion import build_promotion_preview, preview_fingerprint
+from logten_credits import insert_logten_crew
 import hmac
 import hashlib
 from operating_airports import ADDITIONAL_AIRPORTS, ADDITIONAL_AIRPORT_COORDS, OPERATING_AIRPORT_TIMEZONES
@@ -1482,19 +1483,7 @@ def _logten_auto_import_batch(conn, batch_id):
                      candidate.get("actual_instrument_minutes") or 0,
                      "imported" if candidate.get("night_minutes") is not None else "manual"),
                 )
-            for sort_order, (field, role, credit_key) in enumerate((
-                ("pic_crew", "PIC", "pic"), ("sic_crew", "SIC", "sic")
-            )):
-                crew_name = candidate.get(field)
-                if crew_name:
-                    conn.execute(
-                        """INSERT INTO flight_crew(
-                            flight_id,person_name,role,pic_credit,sic_credit,pf_credit,pm_credit,sort_order
-                        ) VALUES(?,?,?,?,?,?,?,?)""",
-                        (flight_id, crew_name, role,
-                         (candidate.get("pic") or 0) if credit_key == "pic" else 0,
-                         (candidate.get("sic") or 0) if credit_key == "sic" else 0, 0, 0, sort_order),
-                    )
+            insert_logten_crew(conn, flight_id, candidate)
             # Source row remains intact and linked to the saved canonical flight.
             conn.execute(
                 """UPDATE import_records SET promoted_flight_id=?,promoted_at=?,
@@ -1825,23 +1814,7 @@ def logten_promote_record(batch_id, record_id):
                     "imported" if candidate.get("night_minutes") is not None else "manual",
                 ),
             )
-        for sort_order, (field, role, credit_key) in enumerate((
-            ("pic_crew", "PIC", "pic"),
-            ("sic_crew", "SIC", "sic"),
-        )):
-            crew_name = candidate.get(field)
-            if crew_name:
-                conn.execute(
-                    """INSERT INTO flight_crew(
-                        flight_id,person_name,role,pic_credit,sic_credit,pf_credit,pm_credit,sort_order
-                    ) VALUES(?,?,?,?,?,?,?,?)""",
-                    (
-                        flight_id, crew_name, role,
-                        candidate.get("pic") if credit_key == "pic" else 0,
-                        candidate.get("sic") if credit_key == "sic" else 0,
-                        0, 0, sort_order,
-                    ),
-                )
+        insert_logten_crew(conn, flight_id, candidate)
         promoted_at=datetime.now(timezone.utc).isoformat()
         updated=conn.execute("""UPDATE import_records
           SET promoted_flight_id=?,promoted_at=?,promotion_sha256=?
