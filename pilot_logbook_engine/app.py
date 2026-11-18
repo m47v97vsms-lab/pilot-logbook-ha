@@ -1838,8 +1838,8 @@ def logten_promote_record(batch_id, record_id):
                     ) VALUES(?,?,?,?,?,?,?,?)""",
                     (
                         flight_id, crew_name, role,
-                        candidate.get("pic") if credit_key == "pic" else 0,
-                        candidate.get("sic") if credit_key == "sic" else 0,
+                        sqlite_credit(candidate.get("pic"), "PIC") if credit_key == "pic" else 0,
+                        sqlite_credit(candidate.get("sic"), "SIC") if credit_key == "sic" else 0,
                         0, 0, sort_order,
                     ),
                 )
