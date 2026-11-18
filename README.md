@@ -2,7 +2,7 @@
 
 [![Add repository to Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fm47v97vsms-lab%2Fpilot-logbook-ha)
 
-A personal pilot logbook app for Home Assistant OS. Current synchronized development package: **0.4.0-dev68**.
+A personal pilot logbook app for Home Assistant OS. Current synchronized development package: **0.4.0-dev69**.
 
 > **Experimental:** This release is for evaluation and testing. Do not use it as the authoritative flight record until the Home Assistant installation, calculations, imports, backups, and restore process have been independently validated.
 
