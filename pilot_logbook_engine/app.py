@@ -103,7 +103,7 @@ def _logten_duplicate_review(conn, batch_id, record_id, fingerprint, candidate,
     staged_rows = conn.execute(
         """SELECT r.id,r.batch_id,r.source_row,r.review_status,r.promoted_flight_id,b.filename
            FROM import_records r JOIN import_batches b ON b.id=r.batch_id
-           WHERE r.fingerprint=? AND r.id<>? ORDER BY r.batch_id,r.source_row,r.id""",
+           WHERE r.fingerprint=? AND r.id<>? AND r.promoted_flight_id IS NULL ORDER BY r.batch_id,r.source_row,r.id""",
         (fingerprint, record_id),
     ).fetchall()
     staged_matches = [{
@@ -1368,6 +1368,139 @@ def logten_upload():
       record_count=parsed["nonempty_records"],blank_rows_skipped=parsed["blank_rows_skipped"],
       delimiter=parsed["delimiter"],classification_counts=parsed["classification_counts"],
       warning_count=parsed["warning_count"],message="Staged for review only; canonical flight totals were not changed."),201
+
+
+
+def _logten_auto_import_batch(conn, batch_id):
+    """Save every unambiguous, non-duplicate route flight; leave only exceptions staged."""
+    batch = conn.execute("SELECT id,field_mapping_json FROM import_batches WHERE id=?", (batch_id,)).fetchone()
+    if batch is None:
+        raise ValueError("Import batch not found.")
+    rows = conn.execute(
+        """SELECT id,source_row,fingerprint,classification,raw_json,corrections_json,
+                  promoted_flight_id,promoted_at
+           FROM import_records WHERE batch_id=? ORDER BY source_row,id""",
+        (batch_id,),
+    ).fetchall()
+    airports = {}
+    for airport_row in conn.execute("SELECT icao,iata,name,timezone FROM airports WHERE enabled=1"):
+        item = dict(airport_row)
+        airports[item["icao"].upper()] = item
+        if item.get("iata"):
+            airports[item["iata"].upper()] = item
+    counts = {"saved": 0, "duplicates": 0, "incomplete": 0, "non_flight": 0, "already_saved": 0}
+    exceptions = []
+    seen_fingerprints = set()
+    for row in rows:
+        if row["promoted_flight_id"] is not None or row["promoted_at"]:
+            counts["already_saved"] += 1
+            continue
+        raw = json.loads(row["raw_json"])
+        fingerprint = row["fingerprint"]
+        if fingerprint in seen_fingerprints:
+            counts["duplicates"] += 1
+            exceptions.append({"source_row": row["source_row"], "reason": "Duplicate source row within this LogTen export."})
+            continue
+        seen_fingerprints.add(fingerprint)
+        mapping = _logten_batch_mapping(conn, batch_id, raw)
+        assessment = assess_logten_record(
+            raw, json.loads(row["corrections_json"] or "{}"), airports, mapping, True
+        )
+        classification = _logten_classification(row["classification"], assessment)
+        if classification != "flight_candidate":
+            counts["non_flight"] += 1
+            continue
+        assessment["classification"] = classification
+        preview = build_promotion_preview(assessment)
+        candidate = preview.get("candidate")
+        duplicate_review = _logten_duplicate_review(
+            conn, batch_id, row["id"], fingerprint, candidate,
+            assessment.get("mapped"), assessment.get("resolved_airports")
+        )
+        # A possible match is deliberately held for a quick exception review;
+        # exact matches and repeated source rows are never imported twice.
+        if duplicate_review.get("has_exact_duplicate") or duplicate_review.get("has_staged_duplicate") \
+                or duplicate_review.get("has_cross_batch_staged_duplicate"):
+            counts["duplicates"] += 1
+            exceptions.append({"source_row": row["source_row"], "reason": "Duplicate flight/source record; not added."})
+            continue
+        if duplicate_review.get("has_possible_duplicate"):
+            counts["incomplete"] += 1
+            exceptions.append({"source_row": row["source_row"], "reason": "Possible existing flight match; verify before adding."})
+            continue
+        if not preview.get("ready_for_manual_confirmation") or not candidate:
+            counts["incomplete"] += 1
+            blockers = preview.get("blockers") or assessment.get("errors") or ["Required flight information is incomplete."]
+            exceptions.append({"source_row": row["source_row"], "reason": "; ".join(blockers[:3])})
+            continue
+
+        cur = conn.execute("""INSERT INTO flights (
+          flight_date,arrival_date,flight_number,aircraft_registration,aircraft_type,
+          departure_icao,arrival_icao,out_utc,off_utc,on_utc,in_utc,
+          out_local,off_local,on_local,in_local,departure_timezone,arrival_timezone,
+          block_minutes,air_minutes,logged_minutes,time_recording_mode,source_total_time,
+          pic,sic,pilot_flying,remarks
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(
+          candidate["flight_date"],candidate["arrival_date"],candidate["flight_number"],
+          candidate["aircraft_registration"],candidate["aircraft_type"],
+          candidate["departure_icao"],candidate["arrival_icao"],candidate["out_utc"],
+          candidate["off_utc"],candidate["on_utc"],candidate["in_utc"],
+          candidate["out_local"],candidate["off_local"],candidate["on_local"],candidate["in_local"],
+          candidate["departure_timezone"],candidate["arrival_timezone"],
+          candidate["block_minutes"],candidate["air_minutes"],candidate["logged_minutes"],
+          candidate["time_recording_mode"],candidate["source_total_time"],candidate["pic"],candidate["sic"],
+          candidate["pilot_flying"],candidate["remarks"]))
+        flight_id = cur.lastrowid
+        if candidate.get("night_minutes") is not None or candidate.get("actual_instrument_minutes") is not None:
+            conn.execute(
+                """INSERT INTO flight_operations(flight_id,night_minutes,actual_instrument_minutes,night_method)
+                   VALUES(?,?,?,?)""",
+                (flight_id, candidate.get("night_minutes") or 0,
+                 candidate.get("actual_instrument_minutes") or 0,
+                 "imported" if candidate.get("night_minutes") is not None else "manual"),
+            )
+        for sort_order, (field, role, credit_key) in enumerate((
+            ("pic_crew", "PIC", "pic"), ("sic_crew", "SIC", "sic")
+        )):
+            crew_name = candidate.get(field)
+            if crew_name:
+                conn.execute(
+                    """INSERT INTO flight_crew(
+                        flight_id,person_name,role,pic_credit,sic_credit,pf_credit,pm_credit,sort_order
+                    ) VALUES(?,?,?,?,?,?,?,?)""",
+                    (flight_id, crew_name, role,
+                     candidate.get("pic") if credit_key == "pic" else 0,
+                     candidate.get("sic") if credit_key == "sic" else 0, 0, 0, sort_order),
+                )
+        # Source row remains intact and linked to the saved canonical flight.
+        conn.execute(
+            """UPDATE import_records SET promoted_flight_id=?,promoted_at=?,
+               review_status='accepted_for_review',unmapped_acknowledged=1
+               WHERE id=? AND batch_id=? AND promoted_flight_id IS NULL""",
+            (flight_id, datetime.now(timezone.utc).isoformat(), row["id"], batch_id),
+        )
+        counts["saved"] += 1
+    return {"batch_id": batch_id, "counts": counts, "exceptions": exceptions,
+            "exception_count": len(exceptions)}
+
+@app.post("/api/imports/<int:batch_id>/auto-import")
+def logten_auto_import(batch_id):
+    conn = db()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        result = _logten_auto_import_batch(conn, batch_id)
+        conn.commit()
+    except ValueError as exc:
+        conn.rollback()
+        return jsonify(error=str(exc)), 404
+    except Exception:
+        conn.rollback()
+        raise
+    return jsonify(ok=True, **result,
+        message=f"Saved {result['counts']['saved']} flights. "
+                f"{result['exception_count']} records were retained for exception review; "
+                "duplicate and non-flight records were not added."), 200
+
 
 @app.delete("/api/imports/<int:batch_id>")
 def logten_delete_batch(batch_id):
