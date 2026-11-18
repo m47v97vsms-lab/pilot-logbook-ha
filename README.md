@@ -2,7 +2,7 @@
 
 [![Add repository to Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fm47v97vsms-lab%2Fpilot-logbook-ha)
 
-A personal pilot logbook app for Home Assistant OS. Current synchronized development package: **0.4.0-dev56**.
+A personal pilot logbook app for Home Assistant OS. Current synchronized development package: **0.4.0-dev57**.
 
 > **Experimental:** This release is for evaluation and testing. Do not use it as the authoritative flight record until the Home Assistant installation, calculations, imports, backups, and restore process have been independently validated.
 
@@ -31,3 +31,8 @@ See [app documentation](pilot_logbook_engine/DOCS.md) for configuration, import 
 ## Compatibility
 
 This repository currently targets **Home Assistant OS on amd64**.
+
+
+## Logbook navigation and directories (dev57)
+
+The main navigation is grouped into Logbook, Directories, and Data & Tools. On wider screens it uses a persistent left navigation rail; on narrow screens it becomes a horizontally scrollable section bar. People, Aircraft, and Places directories include searchable, count-bearing indexes. Selecting an entry opens Browse Flights with that person, aircraft, or airport filter applied. Crew indexes include both managed directory entries and legacy crew names retained on historical flights. Aircraft filters match registration or type; airport filters match either departures or arrivals. Directory maintenance forms remain available inside expandable sections.
