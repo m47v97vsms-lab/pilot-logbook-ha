@@ -13,6 +13,7 @@ from reporting import build_summary, build_routes
 from flight_calculations import calculate_route
 from ingress_security import is_trusted_ingress_proxy
 from logten_import import parse_logten
+from logten_package import parse_logten_package
 from logten_validation import assess_logten_record, FIELD_MAP, default_field_mapping, validate_field_mapping
 from logten_promotion import build_promotion_preview, preview_fingerprint
 from logten_credits import insert_logten_crew
@@ -1369,6 +1370,79 @@ def logten_upload():
       record_count=parsed["nonempty_records"],blank_rows_skipped=parsed["blank_rows_skipped"],
       delimiter=parsed["delimiter"],classification_counts=parsed["classification_counts"],
       warning_count=parsed["warning_count"],message="Staged for review only; canonical flight totals were not changed."),201
+
+
+@app.post("/api/imports/logten-package")
+def logten_package_upload():
+    """Stage the flight export from a complete LogTen package and report companion matching."""
+    uploads = [item for item in request.files.getlist("files") if item and item.filename]
+    if not uploads:
+        return jsonify(error="Select the six LogTen exports together."), 400
+    if len(uploads) > 6:
+        return jsonify(error="A LogTen package may contain no more than six files."), 400
+    package_files = []
+    total_bytes = 0
+    flight_upload = None
+    for item in uploads:
+        content = item.read(10 * 1024 * 1024 + 1)
+        total_bytes += len(content)
+        if len(content) > 10 * 1024 * 1024 or total_bytes > 40 * 1024 * 1024:
+            return jsonify(error="The package exceeds the 40 MB total upload limit (10 MB per file)."), 413
+        package_files.append({"filename": item.filename, "content": content})
+        normalized = re.sub(r"[^a-z0-9]", "", item.filename.casefold())
+        if "exportflights" in normalized or normalized.startswith("flights"):
+            if flight_upload is not None:
+                return jsonify(error="The package contains more than one flight export."), 400
+            flight_upload = (item.filename, content)
+    try:
+        reconciliation = parse_logten_package(package_files)
+        if flight_upload is None:
+            raise ValueError("The package must include the LogTen Export Flights (Tab) file.")
+        filename, flight_content = flight_upload
+        parsed = parse_logten(flight_content, filename)
+    except (ValueError, UnicodeDecodeError, csv.Error) as exc:
+        return jsonify(error=f"Could not read this LogTen package: {exc}"), 400
+
+    digest = hashlib.sha256()
+    for item in sorted(package_files, key=lambda entry: entry["filename"].casefold()):
+        digest.update(item["filename"].encode("utf-8"))
+        digest.update(b"\\0")
+        digest.update(item["content"])
+        digest.update(b"\\0")
+    package_digest = digest.hexdigest()
+    conn = db()
+    existing = conn.execute(
+        "SELECT id,record_count FROM import_batches WHERE file_sha256=?", (package_digest,)
+    ).fetchone()
+    if existing:
+        return jsonify(duplicate=True, batch_id=existing["id"],
+            record_count=existing["record_count"], package_reconciliation=reconciliation,
+            message="This exact LogTen package has already been staged."), 200
+    try:
+        initial_mapping = default_field_mapping(parsed["headers"])
+        cur = conn.execute("""INSERT INTO import_batches
+          (filename,file_sha256,delimiter,record_count,blank_rows_skipped,classification_json,warning_count,field_mapping_json)
+          VALUES(?,?,?,?,?,?,?,?)""",
+          ("LogTen package: " + filename[:230], package_digest, parsed["delimiter"],
+           parsed["nonempty_records"], parsed["blank_rows_skipped"],
+           json.dumps(parsed["classification_counts"]), parsed["warning_count"],
+           json.dumps(initial_mapping, ensure_ascii=False)))
+        batch_id = cur.lastrowid
+        conn.executemany("""INSERT INTO import_records
+          (batch_id,source_row,fingerprint,classification,warnings_json,raw_json)
+          VALUES(?,?,?,?,?,?)""",
+          [(batch_id,row["source_row"],row["fingerprint"],row["classification"],
+            json.dumps(row["warnings"],ensure_ascii=False),
+            json.dumps(row["raw"],ensure_ascii=False)) for row in parsed["rows"]])
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return jsonify(ok=True,batch_id=batch_id,filename=filename,
+        record_count=parsed["nonempty_records"],blank_rows_skipped=parsed["blank_rows_skipped"],
+        classification_counts=parsed["classification_counts"],warning_count=parsed["warning_count"],
+        package_reconciliation=reconciliation,
+        message="LogTen package staged. Flight rows are ready for automatic import; companion directories were reconciled for review only."),201
 
 
 
