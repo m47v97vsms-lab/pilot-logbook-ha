@@ -18,7 +18,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .skip-link{position:absolute;left:-10000px;top:auto;width:1px;height:1px;overflow:hidden}
 .skip-link:focus{left:12px;top:12px;width:auto;height:auto;padding:12px;background:#fff;color:#111;z-index:1000;border-radius:8px}
 .field-label{display:block;color:#c3cee0;font-size:.9rem;margin:12px 0 6px}
-#airport-directory,#flight,#aircraft-directory,#people-directory,#analyze,#saved-flights,#fcv-panel,#logten-import,#backup-panel{scroll-margin-top:14px}
+#flight-browser,#airport-directory,#flight,#aircraft-directory,#people-directory,#analyze,#saved-flights,#fcv-panel,#logten-import,#backup-panel{scroll-margin-top:14px}
 </style><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"></head><body>
 <section id="auth" class="card auth" hidden><h1>Personal Pilot Logbook</h1><p class="muted" id="auth-copy">Secure private logbook access.</p><label for="auth-password">Password</label><input id="auth-password" type="password" autocomplete="current-password" minlength="12"><button id="auth-submit" type="button">Continue</button><div id="auth-message" class="status" role="status"></div></section>
 <div id="app-content" hidden>
@@ -32,6 +32,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 <a href="#aircraft-directory">Aircraft</a>
 <a href="#people-directory">People</a>
 <a href="#analyze">Analysis &amp; map</a>
+<a href="#flight-browser">Browse flights</a>
 <a href="#saved-flights">Saved flights</a>
 <a href="#fcv-panel">FC View</a>
 <a href="#logten-import">LogTen import</a>
@@ -80,6 +81,19 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 <div class="inline" id="range-presets"><button type="button" data-range="7">Last 7 days</button><button type="button" data-range="28">Last 28 days</button><button type="button" data-range="12m">Last 12 months</button><button type="button" data-range="ytd">Year to date</button><button type="button" data-range="all">Lifetime</button><button type="button" data-range="custom">Custom</button></div>
 <div class="grid"><div><label>Start date</label><input type="date" id="report-start"></div><div><label>End date</label><input type="date" id="report-end"></div></div><button type="button" id="report-run">Update analysis</button><div id="report-output" class="muted"></div>
 <h3>Flight map</h3><p class="tiny muted">Schematic route map using airport reference coordinates. It is for logbook analysis only, not navigation.</p><div id="flight-map" class="map-wrap" role="img" aria-label="Map of logged flight routes"></div><div id="map-note" class="tiny muted"></div><div id="map-unplotted" class="tiny muted" role="status" aria-live="polite"></div></section>
+<section class="card" id="flight-browser"><h2>Browse flights</h2><p class="muted">Explore your logbook by crew member, aircraft, airport or keyword. Totals reflect the full filtered result, not just the visible page.</p>
+<div class="grid">
+<div><label for="browse-person">Person / crew</label><select id="browse-person"><option value="">All crew</option></select></div>
+<div><label for="browse-aircraft">Aircraft</label><select id="browse-aircraft"><option value="">All aircraft</option></select></div>
+<div><label for="browse-airport">Airport</label><select id="browse-airport"><option value="">All airports</option></select></div>
+<div><label for="browse-query">Search</label><input id="browse-query" maxlength="100" placeholder="Flight number, registration, route, crew or remarks"></div>
+<div><label for="browse-start">From date</label><input id="browse-start" type="date"></div>
+<div><label for="browse-end">To date</label><input id="browse-end" type="date"></div>
+</div>
+<div class="inline"><button type="button" id="browse-apply">Apply filters</button><button type="button" id="browse-reset">Clear filters</button></div>
+<div id="browse-summary" class="flight muted" role="status">Loading flight directory…</div>
+<div id="browse-results" class="muted">Loading…</div>
+<div class="inline"><button type="button" id="browse-previous" disabled>Previous</button><button type="button" id="browse-next" disabled>Next</button></div></section>
 <section class="card" id="saved-flights"><h2>Saved flights</h2><div id="flights" class="muted">Loading…</div></section>
 <section class="card" id="fcv-panel"><h2>Flight Crew View — staged import</h2><p class="muted">Connect and synchronize your own FC View history. Retrieved records remain isolated here until individually reviewed; they never change authoritative flights or totals automatically. Configure the Client ID, Client Secret, exact Redirect URI, and a 32+ character callback relay secret in the add-on options; follow FC View integration setup documentation for the Home Assistant Cloud webhook.</p><div id="fcv-status" class="status" role="status">Loading FC View status…</div><div class="inline"><button type="button" id="fcv-refresh">Refresh status</button><button type="button" id="fcv-connect" disabled>Connect FC View</button><button type="button" id="fcv-sync" disabled>Sync now</button><button type="button" id="fcv-disconnect" disabled>Revoke and disconnect</button></div><div id="fcv-action-status" class="status" role="status"></div><h3>Staged FC View records</h3><div id="fcv-imports" class="tiny muted">Loading…</div></section>
 <section class="card" id="logten-import"><h2>LogTen import — staging</h2><p class="muted">Upload a LogTen CSV or TSV export to preview and stage its original records. This does not add flights to your live totals.</p><div class="inline"><input type="file" id="logten-file" accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values"><button type="button" id="logten-upload">Upload and stage</button></div><div id="logten-import-status" class="status" role="status"></div><div class="inline"><button type="button" id="logten-clear-unpromoted">Clear all unpromoted imports</button></div><p class="tiny muted">Clearing removes staged uploads only. Confirmed flights and their promoted source records are retained.</p><div id="logten-import-batches" class="tiny muted"></div><div id="logten-import-preview"></div></section>
@@ -115,7 +129,7 @@ function collectRows(selector){return [...document.querySelectorAll(selector)].m
 function collectFlightDetails(){return {duty:{report_utc:document.querySelector('#report-utc').value?utcFieldToIso(document.querySelector('#report-utc').value):'',release_utc:document.querySelector('#release-utc').value?utcFieldToIso(document.querySelector('#release-utc').value):'',duty_minutes:document.querySelector('#duty-minutes').value||null,notes:document.querySelector('#duty-notes').value},operations:{day_landings:Number(document.querySelector('#day-landings').value||0),night_landings:Number(document.querySelector('#night-landings').value||0),approaches:Number(document.querySelector('#approach-count').value||0),holds:Number(document.querySelector('#holds').value||0),autoland:Number(document.querySelector('#autoland').value||0),night_minutes:Number(document.querySelector('#night-time').value||0),actual_instrument_hours:Number(document.querySelector('#actual-instrument-time').value||0),night_method:document.querySelector('#night-method').value},crew:collectRows('.crew-row'),approaches:collectRows('.approach-row')}}
 async function saveFlightDetails(id){const r=await fetch(`api/flights/${id}/details`,{method:'PUT',headers:{'Content-Type':'application/json','X-CSRF-Token':csrfToken},body:JSON.stringify(collectFlightDetails())});const j=await r.json();if(!r.ok)throw new Error(j.error||'Flight saved, but details could not be saved.');return j}
 document.querySelector('#add-crew').onclick=()=>addCrewRow();document.querySelector('#add-approach').onclick=()=>addApproachRow();
-async function authInit(){const status=await fetch('api/setup-status').then(r=>r.json());const sessionData=await fetch('api/session').then(r=>r.json());if(sessionData.authenticated){csrfToken=sessionData.csrf_token;document.querySelector('#app-content').hidden=false;document.querySelector('#auth').hidden=true;refresh();runReport().catch(()=>{});loadBackups();loadLogtenImports();return}document.querySelector('#app-content').hidden=true;document.querySelector('#auth').hidden=false;const first=status.setup_required;document.querySelector('#auth-copy').textContent=first?'Create your private logbook password. Use at least 12 characters.':'Enter your logbook password.';document.querySelector('#auth-password').autocomplete=first?'new-password':'current-password';document.querySelector('#auth-submit').textContent=first?'Create password':'Log in';document.querySelector('#auth-submit').onclick=async()=>{const password=document.querySelector('#auth-password').value;const r=await fetch(first?'api/setup':'api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password})});const j=await r.json();if(!r.ok){document.querySelector('#auth-message').textContent=j.error||'Unable to authenticate';return}await authInit()}}
+async function authInit(){const status=await fetch('api/setup-status').then(r=>r.json());const sessionData=await fetch('api/session').then(r=>r.json());if(sessionData.authenticated){csrfToken=sessionData.csrf_token;document.querySelector('#app-content').hidden=false;document.querySelector('#auth').hidden=true;refresh();runReport().catch(()=>{});loadBackups();loadLogtenImports();loadBrowseOptions().then(()=>runBrowse(true)).catch(e=>{document.querySelector('#browse-summary').textContent=e.message});return}document.querySelector('#app-content').hidden=true;document.querySelector('#auth').hidden=false;const first=status.setup_required;document.querySelector('#auth-copy').textContent=first?'Create your private logbook password. Use at least 12 characters.':'Enter your logbook password.';document.querySelector('#auth-password').autocomplete=first?'new-password':'current-password';document.querySelector('#auth-submit').textContent=first?'Create password':'Log in';document.querySelector('#auth-submit').onclick=async()=>{const password=document.querySelector('#auth-password').value;const r=await fetch(first?'api/setup':'api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password})});const j=await r.json();if(!r.ok){document.querySelector('#auth-message').textContent=j.error||'Unable to authenticate';return}await authInit()}}
 const zones={departure:null,arrival:null}; const selected={dep:null,arr:null};
 const events=['OUT','OFF','ON','IN'];
 const eventRoot=document.querySelector('#events');
@@ -203,6 +217,54 @@ function drawMap(data){
 async function runReport(){const start=document.querySelector('#report-start').value,end=document.querySelector('#report-end').value;const qs=new URLSearchParams();if(start)qs.set('start',start);if(end)qs.set('end',end);const [rr,mr]=await Promise.all([fetch('api/reports/summary?'+qs.toString()),fetch('api/reports/routes?'+qs.toString())]);const j=await rr.json(),map=await mr.json();if(!rr.ok||!mr.ok){document.querySelector('#report-output').textContent=j.error||map.error||'Analysis failed';return}const t=j.totals;const hours=m=>(Number(m||0)/60).toFixed(1)+' h';document.querySelector('#report-output').innerHTML=`<div class="grid"><div class="flight"><b>${t.flights}</b><br>Flights</div><div class="flight"><b>${hours(t.block_minutes)}</b><br>Block</div><div class="flight"><b>${hours(t.air_minutes)}</b><br>Air</div><div class="flight"><b>${hours(t.logged_minutes)}</b><br>Logged time</div><div class="flight"><b>${hours(t.night_minutes)}</b><br>Night</div><div class="flight"><b>${hours(t.actual_instrument_minutes)}</b><br>Actual instrument</div><div class="flight"><b>${t.day_landings}</b><br>Day landings</div><div class="flight"><b>${t.night_landings}</b><br>Night landings</div><div class="flight"><b>${t.approaches}</b><br>Approaches</div><div class="flight"><b>${t.holds}</b><br>Holds</div><div class="flight"><b>${t.autolands}</b><br>Autolands</div></div><h3>By aircraft type</h3>${j.aircraft.map(a=>`<div class="flight">${esc(a.aircraft_type)} · ${a.flights} flights · ${hours(a.logged_minutes)} logged · ${hours(a.block_minutes)} block · ${hours(a.air_minutes)} air</div>`).join('')||'No flights in this range.'}`;drawMap(map)}
 document.querySelector('#report-run').onclick=()=>runReport().catch(e=>setStatus(e.message,'error'));
 const refreshBase=refresh;refresh=async()=>{await refreshBase();await loadManagement()};
+let browseOffset=0,browseLimit=50,browseTotal=0,browseTimer=null;
+async function loadBrowseOptions(){
+ const r=await fetch('api/flights/filter-options'),j=await r.json();
+ if(!r.ok)throw new Error(j.error||'Could not load flight directory filters');
+ const fill=(id,items,value,label,first)=>{const el=document.querySelector('#'+id),selected=el.value;el.innerHTML='<option value="">'+first+'</option>'+items.map(x=>'<option value="'+esc(value(x))+'">'+esc(label(x))+'</option>').join('');if([...el.options].some(o=>o.value===selected))el.value=selected};
+ fill('browse-person',j.people||[],x=>x.id===null?'name:'+x.full_name:String(x.id),x=>x.full_name+' · '+x.flights+' flights','All crew');
+ fill('browse-aircraft',j.aircraft||[],x=>x.value,x=>x.value+' · '+x.flights+' flights','All aircraft');
+ fill('browse-airport',j.airports||[],x=>x.icao,x=>x.icao+(x.iata?' / '+x.iata:'')+' · '+x.name+' · '+x.flights+' movements','All airports');
+}
+async function runBrowse(reset=true){
+ if(reset)browseOffset=0;
+ const qs=new URLSearchParams({limit:String(browseLimit),offset:String(browseOffset)});
+ const person=document.querySelector('#browse-person').value;
+ if(person){if(person.startsWith('name:'))qs.set('person_name',person.slice(5));else qs.set('person_id',person)}
+ const aircraft=document.querySelector('#browse-aircraft').value,airport=document.querySelector('#browse-airport').value;
+ const query=document.querySelector('#browse-query').value.trim();
+ if(aircraft)qs.set('aircraft',aircraft);if(airport)qs.set('airport',airport);if(query)qs.set('q',query);
+ const start=document.querySelector('#browse-start').value,end=document.querySelector('#browse-end').value;
+ if(start)qs.set('start',start);if(end)qs.set('end',end);
+ const box=document.querySelector('#browse-results'),summary=document.querySelector('#browse-summary');
+ box.textContent='Loading flights…';
+ try{
+  const r=await fetch('api/flights/search?'+qs.toString()),j=await r.json();
+  if(!r.ok)throw new Error(j.error||'Flight search failed');
+  browseTotal=j.total;
+  const t=j.totals||{},hours=m=>(Number(m||0)/60).toFixed(1)+' h';
+  summary.innerHTML='<b>'+Number(j.total).toLocaleString()+' flights</b> · '+hours(t.logged_minutes)+' logged · '+hours(t.block_minutes)+' block · '+hours(t.air_minutes)+' air';
+  box.innerHTML=(j.flights||[]).map(f=>{
+   const historical=f.time_recording_mode==='duration_only';
+   const timing=historical?'Logged '+hours(f.logged_minutes)+' · duration-only':'Block '+hours(f.block_minutes)+' · Air '+hours(f.air_minutes)+' · Logged '+hours(f.logged_minutes??f.air_minutes);
+   return '<article class="flight"><div class="inline" style="justify-content:space-between"><b>'+esc(f.flight_date)+' · '+esc(f.flight_number||'Flight')+'</b><button type="button" data-browse-edit="'+f.id+'">Open</button></div><div>'+esc(f.departure_icao)+' → '+esc(f.arrival_icao)+'</div><small>'+esc(f.aircraft_registration||f.aircraft_type||'Aircraft not recorded')+(f.crew_names?' · '+esc(f.crew_names):'')+' · '+esc(timing)+'</small></article>';
+  }).join('')||'<p>No flights match these filters.</p>';
+  document.querySelector('#browse-previous').disabled=browseOffset===0;
+  document.querySelector('#browse-next').disabled=!j.has_more;
+ }catch(e){box.textContent=e.message;summary.textContent='Search unavailable.'}
+}
+document.querySelector('#browse-apply').onclick=()=>runBrowse(true);
+document.querySelector('#browse-reset').onclick=async()=>{
+ for(const id of ['browse-person','browse-aircraft','browse-airport','browse-query','browse-start','browse-end'])document.querySelector('#'+id).value='';
+ await runBrowse(true);
+};
+for(const id of ['browse-person','browse-aircraft','browse-airport','browse-start','browse-end'])document.querySelector('#'+id).addEventListener('change',()=>runBrowse(true));
+document.querySelector('#browse-query').addEventListener('keydown',ev=>{if(ev.key==='Enter')runBrowse(true)});
+document.querySelector('#browse-previous').onclick=()=>{browseOffset=Math.max(0,browseOffset-browseLimit);runBrowse(false)};
+document.querySelector('#browse-next').onclick=()=>{browseOffset+=browseLimit;runBrowse(false)};
+document.querySelector('#browse-results').addEventListener('click',ev=>{const b=ev.target.closest('[data-browse-edit]');if(b)loadFlight(Number(b.dataset.browseEdit))});
+
+
 async function loadBackups(){const box=document.querySelector('#backup-list');if(!box)return;try{const r=await fetch('api/backups'),j=await r.json();if(!r.ok)throw new Error(j.error||'Could not list backups');box.innerHTML=(Array.isArray(j)?j:[]).map(b=>`<div class="backup-row"><span><b>${esc(b.file)}</b><br><small>${esc(b.created_utc||'Date unavailable')} · ${Number(b.size_bytes||0).toLocaleString()} bytes · ${b.valid===false?'INVALID':'verified'}</small></span><span><button type="button" data-backup-download="${esc(b.file)}" ${b.valid===false?'disabled':''}>Download</button><button type="button" data-backup-restore="${esc(b.file)}" ${b.valid===false?'disabled':''}>Restore</button></span></div>`).join('')||'<p class="muted">No backups yet.</p>'}catch(e){box.textContent=e.message}}
 async function loadLogtenImports(){const box=document.querySelector('#logten-import-batches');if(!box)return;try{const r=await fetch('api/imports'),rows=await r.json();box.innerHTML=rows.map(b=>`<div class="flight"><b>${esc(b.filename)}</b> · ${b.record_count} records · ${esc(b.created_at)}<br><button type="button" data-import-preview="${b.id}">View first 100 records</button><button type="button" data-delete-import="${b.id}" data-delete-name="${esc(b.filename)}">Delete batch</button></div>`).join('')||'No staged imports yet.'}catch(e){box.textContent=e.message}}
 document.querySelector('#logten-clear-unpromoted').onclick=async()=>{const status=document.querySelector('#logten-import-status');if(!confirm('Clear every unpromoted LogTen import batch and staged record? Confirmed flights will be preserved.'))return;try{const r=await fetch('api/imports/clear-unpromoted',{method:'POST',headers:{'X-CSRF-Token':csrfToken}}),j=await r.json();if(!r.ok)throw new Error(j.error||'Could not clear imports');status.textContent=j.message+' Removed '+j.deleted_batches+' batches and '+j.deleted_records+' staged records; preserved '+j.preserved_promoted_records+' promoted records.';document.querySelector('#logten-import-preview').innerHTML='';await loadLogtenImports()}catch(e){status.textContent=e.message}};

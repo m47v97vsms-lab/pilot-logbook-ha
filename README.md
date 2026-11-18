@@ -2,7 +2,7 @@
 
 [![Add repository to Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fm47v97vsms-lab%2Fpilot-logbook-ha)
 
-A personal pilot logbook app for Home Assistant OS. Current synchronized development package: **0.4.0-dev55**.
+A personal pilot logbook app for Home Assistant OS. Current synchronized development package: **0.4.0-dev56**.
 
 > **Experimental:** This release is for evaluation and testing. Do not use it as the authoritative flight record until the Home Assistant installation, calculations, imports, backups, and restore process have been independently validated.
 
@@ -16,7 +16,7 @@ The app is configured for Supervisor Ingress and does not publish a host port. T
 
 Dev53 recognizes native LogTen tab-export headers, including the whitespace-padded field names emitted by LogTen. It maps flight date/number, route, aircraft, crew, OUT/OFF/ON/IN events, logged duration, PIC/SIC, night, actual instrument and remarks while retaining all original source values. Simulator-category records are classified separately from route flights. The import review view uses expandable original-source fields and a horizontally scrollable table on narrow screens.
 
-The importer supports historical duration-only, OUT/IN-only, and complete OUT/OFF/ON/IN records without fabricating missing events. Unsupported partial event combinations and records with missing required durations remain in staging for review. Unpromoted import batches can be safely cleared while promoted source records remain protected.
+The importer supports historical duration-only, OUT/IN-only, and complete OUT/OFF/ON/IN records without fabricating missing events. Dev56 adds a directory-aware Browse Flights view with person/crew, aircraft, airport, keyword, and date filters, paginated results, and totals calculated across the full filtered result set. Unsupported partial event combinations and records with missing required durations remain in staging for review. Unpromoted import batches can be safely cleared while promoted source records remain protected.
 
 ## Data and safeguards
 

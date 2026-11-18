@@ -1049,6 +1049,117 @@ def list_flights():
     rows=db().execute("SELECT * FROM flights ORDER BY flight_date DESC,id DESC LIMIT 200").fetchall()
     return jsonify([dict(r) for r in rows])
 
+@app.get("/api/flights/search")
+def search_flights():
+    """Search the canonical logbook with directory-aware filters and aggregate totals."""
+    args = request.args
+    clauses, params = [], []
+    start, end = (args.get("start") or "").strip(), (args.get("end") or "").strip()
+    for label, value in (("start", start), ("end", end)):
+        if value:
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+                return jsonify(error=f"{label} must be an ISO date (YYYY-MM-DD)."), 400
+            try:
+                date.fromisoformat(value)
+            except ValueError:
+                return jsonify(error=f"{label} must be a valid ISO date (YYYY-MM-DD)."), 400
+    if start and end and start > end:
+        return jsonify(error="Start date must be on or before end date."), 400
+    if start:
+        clauses.append("f.flight_date >= ?"); params.append(start)
+    if end:
+        clauses.append("f.flight_date <= ?"); params.append(end)
+    person_name = (args.get("person_name") or "").strip()
+    if person_name:
+        if len(person_name) > 120:
+            return jsonify(error="Crew member name is too long."), 400
+        clauses.append("EXISTS (SELECT 1 FROM flight_crew fc WHERE fc.flight_id=f.id AND lower(fc.person_name)=lower(?))")
+        params.append(person_name)
+    person_id = (args.get("person_id") or "").strip()
+    if person_id:
+        try:
+            person_id = int(person_id)
+            if person_id < 1: raise ValueError
+        except (TypeError, ValueError):
+            return jsonify(error="person_id must be a positive integer."), 400
+        person = db().execute("SELECT full_name FROM people WHERE id=?", (person_id,)).fetchone()
+        if not person:
+            return jsonify(error="Crew member not found."), 404
+        clauses.append("""EXISTS (SELECT 1 FROM flight_crew fc WHERE fc.flight_id=f.id
+            AND (fc.person_id=? OR (fc.person_id IS NULL AND lower(fc.person_name)=lower(?))))""")
+        params.extend((person_id, person["full_name"]))
+    aircraft = (args.get("aircraft") or "").strip()
+    if aircraft:
+        clauses.append("(upper(coalesce(f.aircraft_registration,''))=upper(?) OR upper(coalesce(f.aircraft_type,''))=upper(?))")
+        params.extend((aircraft, aircraft))
+    airport_code = (args.get("airport") or "").strip().upper()
+    if airport_code:
+        airport_row = db().execute("SELECT icao FROM airports WHERE upper(icao)=? OR upper(coalesce(iata,''))=?", (airport_code, airport_code)).fetchone()
+        if not airport_row:
+            return jsonify(error="Airport not found in the directory."), 404
+        clauses.append("(f.departure_icao=? OR f.arrival_icao=?)")
+        params.extend((airport_row["icao"], airport_row["icao"]))
+    query = (args.get("q") or "").strip()
+    if len(query) > 100:
+        return jsonify(error="Search text is limited to 100 characters."), 400
+    if query:
+        like = f"%{query}%"
+        clauses.append("""(coalesce(f.flight_number,'') LIKE ? OR coalesce(f.aircraft_registration,'') LIKE ?
+            OR coalesce(f.aircraft_type,'') LIKE ? OR f.departure_icao LIKE ? OR f.arrival_icao LIKE ?
+            OR coalesce(f.remarks,'') LIKE ? OR EXISTS (
+                SELECT 1 FROM flight_crew fc WHERE fc.flight_id=f.id AND fc.person_name LIKE ?))""")
+        params.extend([like] * 7)
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    try:
+        limit = max(1, min(int(args.get("limit", 50)), 100))
+        offset = max(0, int(args.get("offset", 0)))
+    except ValueError:
+        return jsonify(error="limit and offset must be integers."), 400
+    conn = db()
+    total = conn.execute("SELECT COUNT(*) FROM flights f" + where, params).fetchone()[0]
+    totals = conn.execute("""SELECT COUNT(*) flights,
+        COALESCE(SUM(f.block_minutes),0) block_minutes,
+        COALESCE(SUM(f.air_minutes),0) air_minutes,
+        COALESCE(SUM(f.logged_minutes),0) logged_minutes
+        FROM flights f""" + where, params).fetchone()
+    rows = conn.execute("""SELECT f.*,
+        (SELECT group_concat(person_name, ', ') FROM (
+            SELECT DISTINCT person_name FROM flight_crew WHERE flight_id=f.id ORDER BY person_name
+        )) crew_names
+        FROM flights f""" + where + " ORDER BY f.flight_date DESC,f.id DESC LIMIT ? OFFSET ?",
+        params + [limit, offset]).fetchall()
+    return jsonify(flights=[dict(row) for row in rows], total=total, offset=offset,
+        limit=limit, has_more=offset + len(rows) < total, totals=dict(totals))
+
+
+@app.get("/api/flights/filter-options")
+def flight_filter_options():
+    conn = db()
+    people_rows = conn.execute("""SELECT p.id,p.full_name,COUNT(DISTINCT fc.flight_id) flights
+        FROM people p LEFT JOIN flight_crew fc ON fc.person_id=p.id
+        GROUP BY p.id,p.full_name""").fetchall()
+    people = [dict(row) for row in people_rows]
+    known_names = {str(row["full_name"]).casefold() for row in people}
+    legacy_rows = conn.execute("""SELECT person_name full_name,COUNT(DISTINCT flight_id) flights
+        FROM flight_crew WHERE person_id IS NULL AND trim(person_name)<>''
+        GROUP BY person_name ORDER BY person_name COLLATE NOCASE""").fetchall()
+    for row in legacy_rows:
+        if row["full_name"].casefold() not in known_names:
+            people.append({"id": None, "full_name": row["full_name"], "flights": row["flights"]})
+    people.sort(key=lambda item: item["full_name"].casefold())
+    aircraft = conn.execute("""SELECT value,COUNT(*) flights FROM (
+        SELECT CASE WHEN trim(coalesce(aircraft_registration,''))<>'' THEN aircraft_registration
+                    ELSE coalesce(aircraft_type,'Unspecified') END value
+        FROM flights
+    ) GROUP BY value ORDER BY value COLLATE NOCASE""").fetchall()
+    airports = conn.execute("""SELECT a.icao,a.iata,a.name,COUNT(*) flights FROM (
+        SELECT departure_icao icao FROM flights UNION ALL SELECT arrival_icao icao FROM flights
+    ) used JOIN airports a ON a.icao=used.icao
+        GROUP BY a.icao,a.iata,a.name ORDER BY a.icao""").fetchall()
+    return jsonify(people=[dict(row) for row in people],
+        aircraft=[dict(row) for row in aircraft], airports=[dict(row) for row in airports])
+
+
 @app.get("/api/flights/<int:flight_id>")
 def get_flight(flight_id):
     row=db().execute("SELECT * FROM flights WHERE id=?",(flight_id,)).fetchone()
