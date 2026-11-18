@@ -1135,9 +1135,9 @@ def search_flights():
 @app.get("/api/flights/filter-options")
 def flight_filter_options():
     conn = db()
-    people_rows = conn.execute("""SELECT p.id,p.full_name,COUNT(DISTINCT fc.flight_id) flights
+    people_rows = conn.execute("""SELECT p.id,p.full_name,p.employee_id,COUNT(DISTINCT fc.flight_id) flights
         FROM people p LEFT JOIN flight_crew fc ON fc.person_id=p.id
-        GROUP BY p.id,p.full_name""").fetchall()
+        GROUP BY p.id,p.full_name,p.employee_id""").fetchall()
     people = [dict(row) for row in people_rows]
     known_names = {str(row["full_name"]).casefold() for row in people}
     legacy_rows = conn.execute("""SELECT person_name full_name,COUNT(DISTINCT flight_id) flights
@@ -1145,7 +1145,7 @@ def flight_filter_options():
         GROUP BY person_name ORDER BY person_name COLLATE NOCASE""").fetchall()
     for row in legacy_rows:
         if row["full_name"].casefold() not in known_names:
-            people.append({"id": None, "full_name": row["full_name"], "flights": row["flights"]})
+            people.append({"id": None, "full_name": row["full_name"], "employee_id": "", "flights": row["flights"]})
     people.sort(key=lambda item: item["full_name"].casefold())
     aircraft = conn.execute("""SELECT value,kind,COUNT(*) flights FROM (
         SELECT trim(aircraft_registration) value,'Registration' kind FROM flights
@@ -1154,10 +1154,10 @@ def flight_filter_options():
         SELECT trim(aircraft_type) value,'Type' kind FROM flights
         WHERE trim(coalesce(aircraft_type,''))<>''
     ) GROUP BY value,kind ORDER BY kind,value COLLATE NOCASE""").fetchall()
-    airports = conn.execute("""SELECT a.icao,a.iata,a.name,COUNT(*) flights FROM (
+    airports = conn.execute("""SELECT a.icao,a.iata,a.name,a.city,a.country,COUNT(*) flights FROM (
         SELECT departure_icao icao FROM flights UNION ALL SELECT arrival_icao icao FROM flights
     ) used JOIN airports a ON a.icao=used.icao
-        GROUP BY a.icao,a.iata,a.name ORDER BY a.icao""").fetchall()
+        GROUP BY a.icao,a.iata,a.name,a.city,a.country ORDER BY a.icao""").fetchall()
     return jsonify(people=[dict(row) for row in people],
         aircraft=[dict(row) for row in aircraft], airports=[dict(row) for row in airports])
 
