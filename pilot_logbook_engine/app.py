@@ -1570,9 +1570,15 @@ def logten_import_detail(batch_id):
     rows=db().execute("""SELECT id,source_row,classification,warnings_json,raw_json,review_status,
       corrections_json,corrected_at,promoted_flight_id,promoted_at,
       unmapped_acknowledged,duplicate_acknowledged FROM import_records
-      WHERE batch_id=? ORDER BY source_row LIMIT ? OFFSET ?""",
+      WHERE batch_id=? AND promoted_flight_id IS NULL AND classification='flight_candidate'
+      ORDER BY source_row LIMIT ? OFFSET ?""",
       (batch_id,limit,offset)).fetchall()
-    total=db().execute("SELECT COUNT(*) FROM import_records WHERE batch_id=?",(batch_id,)).fetchone()[0]
+    total=db().execute("""SELECT COUNT(*) FROM import_records
+      WHERE batch_id=? AND promoted_flight_id IS NULL AND classification='flight_candidate'""",(batch_id,)).fetchone()[0]
+    total_source=db().execute("SELECT COUNT(*) FROM import_records WHERE batch_id=?",(batch_id,)).fetchone()[0]
+    saved=db().execute("SELECT COUNT(*) FROM import_records WHERE batch_id=? AND promoted_flight_id IS NOT NULL",(batch_id,)).fetchone()[0]
+    archived=db().execute("""SELECT COUNT(*) FROM import_records WHERE batch_id=?
+      AND classification<>'flight_candidate'""",(batch_id,)).fetchone()[0]
     first=db().execute("SELECT raw_json FROM import_records WHERE batch_id=? ORDER BY source_row LIMIT 1",(batch_id,)).fetchone()
     first_raw=json.loads(first["raw_json"]) if first else {}
     source_headers=list(first_raw.keys())
@@ -1583,7 +1589,8 @@ def logten_import_detail(batch_id):
                     corrections=json.loads(r["corrections_json"]),
                     unmapped_acknowledged=bool(r["unmapped_acknowledged"]),
                     duplicate_acknowledged=bool(r["duplicate_acknowledged"])) for r in rows],
-      total_records=total,limit=limit,offset=offset,has_more=offset+len(rows)<total)
+      total_records=total,total_source_records=total_source,saved_flights=saved,
+      non_flight_archived=archived,limit=limit,offset=offset,has_more=offset+len(rows)<total)
 
 
 @app.patch("/api/imports/<int:batch_id>/mapping")
