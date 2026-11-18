@@ -71,7 +71,14 @@ def build_promotion_preview(assessment: dict) -> dict:
                         ", ".join(item.get("source_column", "unknown") for item in unmapped_columns))
     if not assessment.get("eligible_for_manual_promotion_review", False):
         blockers.append("Assessment is not eligible for manual promotion review.")
-    for key in ("departure_icao", "arrival_icao", "departure_timezone", "arrival_timezone"):
+    # Airport codes are mandatory for every flight. Time zones are mandatory
+    # only when local event timestamps need conversion; duration-only imports
+    # preserve historical credits without inventing event times or zones.
+    duration_only = not any(str(mapped.get(key) or "").strip() for key in ("out", "off", "on", "in"))
+    required_airport_fields = ("departure_icao", "arrival_icao") + (
+        () if duration_only else ("departure_timezone", "arrival_timezone")
+    )
+    for key in required_airport_fields:
         if not airports.get(key):
             blockers.append(f"Resolved {key.replace('_', ' ')} is missing.")
 
