@@ -23,6 +23,8 @@ jobs:
         run: |
           ruff check --select F63,F7,F82 pilot_logbook_engine
           python -m compileall -q pilot_logbook_engine
+      - name: Run LogTen import unit tests
+        run: python -m unittest discover -s pilot_logbook_engine/tests -v
       - name: Validate Supervisor metadata and bundled data
         run: |
           python - <<'PY'
