@@ -1,7 +1,6 @@
-import math
 import unittest
 
-from logten_credits import sqlite_credit
+from pilot_logbook_engine.logten_credits import sqlite_credit
 
 
 class SqliteCreditTests(unittest.TestCase):
