@@ -1135,7 +1135,7 @@ def search_flights():
 @app.get("/api/flights/filter-options")
 def flight_filter_options():
     conn = db()
-    people_rows = conn.execute("""SELECT p.id,p.full_name,COUNT(DISTINCT fc.flight_id) flights
+    people_rows = conn.execute("""SELECT p.id,p.full_name,p.employee_id,COUNT(DISTINCT fc.flight_id) flights
         FROM people p LEFT JOIN flight_crew fc ON fc.person_id=p.id
         GROUP BY p.id,p.full_name""").fetchall()
     people = [dict(row) for row in people_rows]
