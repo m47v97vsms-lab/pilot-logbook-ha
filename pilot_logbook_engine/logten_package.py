@@ -228,6 +228,7 @@ def parse_logten_package(files: list[dict[str, Any]]) -> dict[str, Any]:
         },
         "duplicate_reference_keys": duplicate_reference_keys,
         "diagnostics": dict(diagnostics),
-        "source_rows_parsed": True,\n        "source_data_persisted": False,
+        "source_rows_parsed": True,
+        "source_data_persisted": False,
         "note": "No canonical flight, crew, aircraft, or airport records were created or modified.",
     }
