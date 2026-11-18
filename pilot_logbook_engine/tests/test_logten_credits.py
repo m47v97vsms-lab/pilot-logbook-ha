@@ -43,7 +43,7 @@ class SqliteCreditTests(unittest.TestCase):
         self.assertEqual(inserted, 1)
         self.assertEqual(rows, [("Pilot One", "PIC", 1.25, 0.0)])
 
-    def test_sqlite_nan_is_normalized_before_not_null_insert(self):
+    def test_sqlite_nan_is_rejected_before_not_null_insert(self):
         conn = sqlite3.connect(":memory:")
         conn.execute("""CREATE TABLE flight_crew(
             id INTEGER PRIMARY KEY, flight_id INTEGER NOT NULL,
@@ -51,15 +51,12 @@ class SqliteCreditTests(unittest.TestCase):
             pic_credit REAL NOT NULL, sic_credit REAL NOT NULL,
             pf_credit REAL NOT NULL, pm_credit REAL NOT NULL,
             sort_order INTEGER NOT NULL)""")
-        inserted = insert_logten_crew(conn, 2, {
-            "pic_crew": "Pilot Two", "sic_crew": None,
-            "pic": float("nan"), "sic": None,
-        })
-        row = conn.execute(
-            "SELECT pic_credit,sic_credit FROM flight_crew"
-        ).fetchone()
-        self.assertEqual(inserted, 1)
-        self.assertEqual(row, (0.0, 0.0))
+        with self.assertRaises(ValueError):
+            insert_logten_crew(conn, 2, {
+                "pic_crew": "Pilot Two", "sic_crew": None,
+                "pic": float("nan"), "sic": None,
+            })
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM flight_crew").fetchone()[0], 0)
 
     def test_invalid_credit_rolls_back_without_nullable_value(self):
         conn = sqlite3.connect(":memory:")
