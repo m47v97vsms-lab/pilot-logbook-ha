@@ -36,3 +36,5 @@ This repository currently targets **Home Assistant OS on amd64**.
 ## Logbook navigation and directories (dev57)
 
 The main navigation is grouped into Logbook, Directories, and Data & Tools. On wider screens it uses a persistent left navigation rail; on narrow screens it becomes a horizontally scrollable section bar. People, Aircraft, and Places directories include searchable, count-bearing indexes. Selecting an entry opens Browse Flights with that person, aircraft, or airport filter applied. Crew indexes include both managed directory entries and legacy crew names retained on historical flights. Aircraft filters match registration or type; airport filters match either departures or arrivals. Directory maintenance forms remain available inside expandable sections.
+
+The dev57 navigation groups Logbook, Directories, and Data & Tools. People, Aircraft (separate registration and type entries), and Places have searchable indexes with flight counts; selecting an entry applies that filter in Browse Flights. The navigation becomes a left rail on wider screens and a horizontal section bar on mobile.

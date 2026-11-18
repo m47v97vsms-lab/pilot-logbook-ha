@@ -1147,11 +1147,13 @@ def flight_filter_options():
         if row["full_name"].casefold() not in known_names:
             people.append({"id": None, "full_name": row["full_name"], "flights": row["flights"]})
     people.sort(key=lambda item: item["full_name"].casefold())
-    aircraft = conn.execute("""SELECT value,COUNT(*) flights FROM (
-        SELECT CASE WHEN trim(coalesce(aircraft_registration,''))<>'' THEN aircraft_registration
-                    ELSE coalesce(aircraft_type,'Unspecified') END value
-        FROM flights
-    ) GROUP BY value ORDER BY value COLLATE NOCASE""").fetchall()
+    aircraft = conn.execute("""SELECT value,kind,COUNT(*) flights FROM (
+        SELECT trim(aircraft_registration) value,'Registration' kind FROM flights
+        WHERE trim(coalesce(aircraft_registration,''))<>''
+        UNION ALL
+        SELECT trim(aircraft_type) value,'Type' kind FROM flights
+        WHERE trim(coalesce(aircraft_type,''))<>''
+    ) GROUP BY value,kind ORDER BY kind,value COLLATE NOCASE""").fetchall()
     airports = conn.execute("""SELECT a.icao,a.iata,a.name,COUNT(*) flights FROM (
         SELECT departure_icao icao FROM flights UNION ALL SELECT arrival_icao icao FROM flights
     ) used JOIN airports a ON a.icao=used.icao
