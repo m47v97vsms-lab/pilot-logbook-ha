@@ -26,15 +26,21 @@ FILE_ROLES = {
 def _role_for_filename(filename: str) -> str | None:
     normalized = re.sub(r"\s+", " ", filename.casefold()).strip()
     matches = [
-        role for role, aliases in FILE_ROLES.items()
-        if any(alias in normalized for alias in aliases)
+        (len(alias), role)
+        for role, aliases in FILE_ROLES.items()
+        for alias in aliases
+        if alias in normalized
     ]
-    if len(matches) > 1:
-        # The tabular Places export must not be confused with KML.
-        if "places_kml" in matches and "places" in matches:
-            return "places_kml" if normalized.endswith(".kml") else "places"
+    if not matches:
+        return None
+    longest = max(length for length, _role in matches)
+    best = {role for length, role in matches if length == longest}
+    if len(best) != 1:
         raise ValueError(f"Ambiguous LogTen export filename: {filename}")
-    return matches[0] if matches else None
+    role = best.pop()
+    if role == "places_kml" and not normalized.endswith(".kml"):
+        raise ValueError(f"{filename}: Places KML export must use a .kml filename.")
+    return role
 
 
 def _read_tabular(content: str | bytes, filename: str) -> dict[str, Any]:
