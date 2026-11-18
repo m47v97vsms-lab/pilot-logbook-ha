@@ -264,7 +264,7 @@ async function loadBrowseOptions(){
  fill('browse-person',j.people||[],x=>x.id===null?'name:'+x.full_name:String(x.id),x=>x.full_name+(x.employee_id?' · ID '+x.employee_id:'')+' · '+x.flights+' flights','All crew');
  fill('browse-aircraft',j.aircraft||[],x=>x.value,x=>x.value+' · '+x.flights+' flights','All aircraft');
  fill('browse-airport',j.airports||[],x=>x.icao,x=>x.icao+(x.iata?' / '+x.iata:'')+' · '+x.name+(x.city?' · '+x.city:'')+' · '+x.flights+' movements','All airports');
- renderDirectoryIndex('people-index',j.people||[],'person','people-index-search',x=>x.full_name,x=>(x.flights||0)+' flights');
+ renderDirectoryIndex('people-index',j.people||[],'person','people-index-search',x=>x.full_name,x=>(x.employee_id?'ID '+x.employee_id+' · ':'')+(x.flights||0)+' flights');
  renderDirectoryIndex('aircraft-index',j.aircraft||[],'aircraft','aircraft-index-search',x=>x.value,x=>(x.kind||'Aircraft')+' · '+(x.flights||0)+' flights');
  renderDirectoryIndex('place-index',j.airports||[],'airport','place-index-search',x=>x.icao+(x.iata?' / '+x.iata:''),x=>[x.name,x.city,x.country].filter(Boolean).join(' · ')+' · '+(x.flights||0)+' movements');
 }
