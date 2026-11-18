@@ -1,6 +1,14 @@
+import sys
 import unittest
+from pathlib import Path
 
-from pilot_logbook_engine.logten_validation import default_field_mapping
+# Match the app's runtime import layout: modules inside the app directory are
+# imported as top-level modules by the application.
+APP_DIR = Path(__file__).resolve().parents[1]
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0, str(APP_DIR))
+
+from logten_validation import default_field_mapping
 
 
 class NativeLogTenHeaderMappingTests(unittest.TestCase):
