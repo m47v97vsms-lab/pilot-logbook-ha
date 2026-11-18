@@ -1392,113 +1392,128 @@ def _logten_auto_import_batch(conn, batch_id):
     exceptions = []
     seen_fingerprints = set()
     for row in rows:
-        if row["promoted_flight_id"] is not None or row["promoted_at"]:
-            counts["already_saved"] += 1
-            continue
-        raw = json.loads(row["raw_json"])
-        fingerprint = row["fingerprint"]
-        if fingerprint in seen_fingerprints:
-            counts["duplicates"] += 1
-            exceptions.append({"source_row": row["source_row"], "reason": "Duplicate source row within this LogTen export."})
-            continue
-        prior_source = conn.execute(
-            "SELECT id,batch_id FROM import_records WHERE fingerprint=? AND promoted_flight_id IS NOT NULL LIMIT 1",
-            (fingerprint,),
-        ).fetchone()
-        if prior_source:
-            counts["duplicates"] += 1
-            exceptions.append({"source_row": row["source_row"], "reason": "This LogTen source record was already imported in an earlier batch."})
-            continue
-        seen_fingerprints.add(fingerprint)
-        mapping = _logten_batch_mapping(conn, batch_id, raw)
+        # Each source row is isolated. A malformed value or unexpected row-level
+        # constraint must not abort the other 3,778 records in the migration.
+        conn.execute("SAVEPOINT logten_row")
         try:
-            assessment = assess_logten_record(
-                raw, json.loads(row["corrections_json"] or "{}"), airports, mapping, True
-            )
-            classification = _logten_classification(row["classification"], assessment)
-            if classification != "flight_candidate":
-                counts["non_flight"] += 1
+            if row["promoted_flight_id"] is not None or row["promoted_at"]:
+                counts["already_saved"] += 1
                 continue
-            assessment["classification"] = classification
-            preview = build_promotion_preview(assessment)
-            candidate = preview.get("candidate")
-            duplicate_review = _logten_duplicate_review(
-                conn, batch_id, row["id"], fingerprint, candidate,
-                assessment.get("mapped"), assessment.get("resolved_airports")
+            raw = json.loads(row["raw_json"])
+            fingerprint = row["fingerprint"]
+            if fingerprint in seen_fingerprints:
+                counts["duplicates"] += 1
+                exceptions.append({"source_row": row["source_row"], "reason": "Duplicate source row within this LogTen export."})
+                continue
+            prior_source = conn.execute(
+                "SELECT id,batch_id FROM import_records WHERE fingerprint=? AND promoted_flight_id IS NOT NULL LIMIT 1",
+                (fingerprint,),
+            ).fetchone()
+            if prior_source:
+                counts["duplicates"] += 1
+                exceptions.append({"source_row": row["source_row"], "reason": "This LogTen source record was already imported in an earlier batch."})
+                continue
+            seen_fingerprints.add(fingerprint)
+            mapping = _logten_batch_mapping(conn, batch_id, raw)
+            try:
+                assessment = assess_logten_record(
+                    raw, json.loads(row["corrections_json"] or "{}"), airports, mapping, True
+                )
+                classification = _logten_classification(row["classification"], assessment)
+                if classification != "flight_candidate":
+                    counts["non_flight"] += 1
+                    continue
+                assessment["classification"] = classification
+                preview = build_promotion_preview(assessment)
+                candidate = preview.get("candidate")
+                duplicate_review = _logten_duplicate_review(
+                    conn, batch_id, row["id"], fingerprint, candidate,
+                    assessment.get("mapped"), assessment.get("resolved_airports")
+                )
+            except (ValueError, TypeError, KeyError, OverflowError) as exc:
+                # A malformed value in one historical source row must not roll back
+                # thousands of otherwise valid flights in this one-time migration.
+                counts["incomplete"] += 1
+                reason = str(exc).strip() or "Source values could not be interpreted."
+                exceptions.append({
+                    "source_row": row["source_row"],
+                    "reason": f"Could not safely interpret this record: {reason[:240]}",
+                })
+                continue
+            # A possible match is deliberately held for a quick exception review;
+            # exact matches and repeated source rows are never imported twice.
+            if duplicate_review.get("has_exact_duplicate") or duplicate_review.get("has_staged_duplicate") \
+                    or duplicate_review.get("has_cross_batch_staged_duplicate"):
+                counts["duplicates"] += 1
+                exceptions.append({"source_row": row["source_row"], "reason": "Duplicate flight/source record; not added."})
+                continue
+            if duplicate_review.get("has_possible_duplicate"):
+                counts["incomplete"] += 1
+                exceptions.append({"source_row": row["source_row"], "reason": "Possible existing flight match; verify before adding."})
+                continue
+            if not preview.get("ready_for_manual_confirmation") or not candidate:
+                counts["incomplete"] += 1
+                blockers = preview.get("blockers") or assessment.get("errors") or ["Required flight information is incomplete."]
+                exceptions.append({"source_row": row["source_row"], "reason": "; ".join(blockers[:3])})
+                continue
+
+            cur = conn.execute("""INSERT INTO flights (
+              flight_date,arrival_date,flight_number,aircraft_registration,aircraft_type,
+              departure_icao,arrival_icao,out_utc,off_utc,on_utc,in_utc,
+              out_local,off_local,on_local,in_local,departure_timezone,arrival_timezone,
+              block_minutes,air_minutes,logged_minutes,time_recording_mode,source_total_time,
+              pic,sic,pilot_flying,remarks
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(
+              candidate["flight_date"],candidate["arrival_date"],candidate["flight_number"],
+              candidate["aircraft_registration"],candidate["aircraft_type"],
+              candidate["departure_icao"],candidate["arrival_icao"],candidate["out_utc"],
+              candidate["off_utc"],candidate["on_utc"],candidate["in_utc"],
+              candidate["out_local"],candidate["off_local"],candidate["on_local"],candidate["in_local"],
+              candidate["departure_timezone"],candidate["arrival_timezone"],
+              candidate["block_minutes"],candidate["air_minutes"],candidate["logged_minutes"],
+              candidate["time_recording_mode"],candidate["source_total_time"],candidate["pic"],candidate["sic"],
+              candidate["pilot_flying"],candidate["remarks"]))
+            flight_id = cur.lastrowid
+            if candidate.get("night_minutes") is not None or candidate.get("actual_instrument_minutes") is not None:
+                conn.execute(
+                    """INSERT INTO flight_operations(flight_id,night_minutes,actual_instrument_minutes,night_method)
+                       VALUES(?,?,?,?)""",
+                    (flight_id, candidate.get("night_minutes") or 0,
+                     candidate.get("actual_instrument_minutes") or 0,
+                     "imported" if candidate.get("night_minutes") is not None else "manual"),
+                )
+            for sort_order, (field, role, credit_key) in enumerate((
+                ("pic_crew", "PIC", "pic"), ("sic_crew", "SIC", "sic")
+            )):
+                crew_name = candidate.get(field)
+                if crew_name:
+                    conn.execute(
+                        """INSERT INTO flight_crew(
+                            flight_id,person_name,role,pic_credit,sic_credit,pf_credit,pm_credit,sort_order
+                        ) VALUES(?,?,?,?,?,?,?,?)""",
+                        (flight_id, crew_name, role,
+                         candidate.get("pic") if credit_key == "pic" else 0,
+                         candidate.get("sic") if credit_key == "sic" else 0, 0, 0, sort_order),
+                    )
+            # Source row remains intact and linked to the saved canonical flight.
+            conn.execute(
+                """UPDATE import_records SET promoted_flight_id=?,promoted_at=?,
+                   review_status='accepted_for_review',unmapped_acknowledged=1
+                   WHERE id=? AND batch_id=? AND promoted_flight_id IS NULL""",
+                (flight_id, datetime.now(timezone.utc).isoformat(), row["id"], batch_id),
             )
-        except (ValueError, TypeError, KeyError, OverflowError) as exc:
-            # A malformed value in one historical source row must not roll back
-            # thousands of otherwise valid flights in this one-time migration.
+            counts["saved"] += 1
+        except Exception as exc:
+            conn.execute("ROLLBACK TO SAVEPOINT logten_row")
             counts["incomplete"] += 1
-            reason = str(exc).strip() or "Source values could not be interpreted."
+            reason = str(exc).strip() or type(exc).__name__
             exceptions.append({
                 "source_row": row["source_row"],
-                "reason": f"Could not safely interpret this record: {reason[:240]}",
+                "reason": f"Unexpected row error ({type(exc).__name__}): {reason[:240]}",
             })
-            continue
-        # A possible match is deliberately held for a quick exception review;
-        # exact matches and repeated source rows are never imported twice.
-        if duplicate_review.get("has_exact_duplicate") or duplicate_review.get("has_staged_duplicate") \
-                or duplicate_review.get("has_cross_batch_staged_duplicate"):
-            counts["duplicates"] += 1
-            exceptions.append({"source_row": row["source_row"], "reason": "Duplicate flight/source record; not added."})
-            continue
-        if duplicate_review.get("has_possible_duplicate"):
-            counts["incomplete"] += 1
-            exceptions.append({"source_row": row["source_row"], "reason": "Possible existing flight match; verify before adding."})
-            continue
-        if not preview.get("ready_for_manual_confirmation") or not candidate:
-            counts["incomplete"] += 1
-            blockers = preview.get("blockers") or assessment.get("errors") or ["Required flight information is incomplete."]
-            exceptions.append({"source_row": row["source_row"], "reason": "; ".join(blockers[:3])})
-            continue
-
-        cur = conn.execute("""INSERT INTO flights (
-          flight_date,arrival_date,flight_number,aircraft_registration,aircraft_type,
-          departure_icao,arrival_icao,out_utc,off_utc,on_utc,in_utc,
-          out_local,off_local,on_local,in_local,departure_timezone,arrival_timezone,
-          block_minutes,air_minutes,logged_minutes,time_recording_mode,source_total_time,
-          pic,sic,pilot_flying,remarks
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(
-          candidate["flight_date"],candidate["arrival_date"],candidate["flight_number"],
-          candidate["aircraft_registration"],candidate["aircraft_type"],
-          candidate["departure_icao"],candidate["arrival_icao"],candidate["out_utc"],
-          candidate["off_utc"],candidate["on_utc"],candidate["in_utc"],
-          candidate["out_local"],candidate["off_local"],candidate["on_local"],candidate["in_local"],
-          candidate["departure_timezone"],candidate["arrival_timezone"],
-          candidate["block_minutes"],candidate["air_minutes"],candidate["logged_minutes"],
-          candidate["time_recording_mode"],candidate["source_total_time"],candidate["pic"],candidate["sic"],
-          candidate["pilot_flying"],candidate["remarks"]))
-        flight_id = cur.lastrowid
-        if candidate.get("night_minutes") is not None or candidate.get("actual_instrument_minutes") is not None:
-            conn.execute(
-                """INSERT INTO flight_operations(flight_id,night_minutes,actual_instrument_minutes,night_method)
-                   VALUES(?,?,?,?)""",
-                (flight_id, candidate.get("night_minutes") or 0,
-                 candidate.get("actual_instrument_minutes") or 0,
-                 "imported" if candidate.get("night_minutes") is not None else "manual"),
-            )
-        for sort_order, (field, role, credit_key) in enumerate((
-            ("pic_crew", "PIC", "pic"), ("sic_crew", "SIC", "sic")
-        )):
-            crew_name = candidate.get(field)
-            if crew_name:
-                conn.execute(
-                    """INSERT INTO flight_crew(
-                        flight_id,person_name,role,pic_credit,sic_credit,pf_credit,pm_credit,sort_order
-                    ) VALUES(?,?,?,?,?,?,?,?)""",
-                    (flight_id, crew_name, role,
-                     candidate.get("pic") if credit_key == "pic" else 0,
-                     candidate.get("sic") if credit_key == "sic" else 0, 0, 0, sort_order),
-                )
-        # Source row remains intact and linked to the saved canonical flight.
-        conn.execute(
-            """UPDATE import_records SET promoted_flight_id=?,promoted_at=?,
-               review_status='accepted_for_review',unmapped_acknowledged=1
-               WHERE id=? AND batch_id=? AND promoted_flight_id IS NULL""",
-            (flight_id, datetime.now(timezone.utc).isoformat(), row["id"], batch_id),
-        )
-        counts["saved"] += 1
+            app.logger.exception("LogTen auto-import skipped source row %s in batch %s", row["source_row"], batch_id)
+        finally:
+            conn.execute("RELEASE SAVEPOINT logten_row")
     return {"batch_id": batch_id, "counts": counts, "exceptions": exceptions,
             "exception_count": len(exceptions)}
 
