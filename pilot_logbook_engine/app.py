@@ -1401,6 +1401,14 @@ def _logten_auto_import_batch(conn, batch_id):
             counts["duplicates"] += 1
             exceptions.append({"source_row": row["source_row"], "reason": "Duplicate source row within this LogTen export."})
             continue
+        prior_source = conn.execute(
+            "SELECT id,batch_id FROM import_records WHERE fingerprint=? AND promoted_flight_id IS NOT NULL LIMIT 1",
+            (fingerprint,),
+        ).fetchone()
+        if prior_source:
+            counts["duplicates"] += 1
+            exceptions.append({"source_row": row["source_row"], "reason": "This LogTen source record was already imported in an earlier batch."})
+            continue
         seen_fingerprints.add(fingerprint)
         mapping = _logten_batch_mapping(conn, batch_id, raw)
         assessment = assess_logten_record(
